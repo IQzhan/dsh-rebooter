@@ -1,0 +1,14 @@
+{
+  "name": "dsh-rebooter-repo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Source repository for the dsh-rebooter plugin. The installable package is built into package/.",
+  "type": "module",
+  "scripts": {
+    "build": "node build-rebooter.mjs",
+    "test": "node run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
