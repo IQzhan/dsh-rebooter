@@ -16,7 +16,7 @@ Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design
 | `update-stop` | yes | yes |
 | `update-restart` | yes | yes |
 
-The menu registers on `sidebar.footer.action`. In the wide sidebar the button is moved to the left of the Settings trigger so the gear is squeezed; on the rail it stays stacked above Settings.
+The menu registers on `sidebar.footer.action`. In the wide sidebar the foot is laid out as a row (CSS) and this control is parked in the Settings trigger row; on the rail it stays stacked above Settings.
 
 A detached Node supervisor keeps DSH alive after start: an unexpected host exit is relaunched until you `stop`. A second `start` only opens the browser.
 
@@ -64,7 +64,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 node verify.mjs
 ```
 
-**7 suites, 134 assertions**: policy core · runtime · adapter · package · menu · bilingual docs · portability guard.
+**7 suites, 136 assertions**: policy core · runtime · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

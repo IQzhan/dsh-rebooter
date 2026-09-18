@@ -1,10 +1,12 @@
 /**
  * dsh-rebooter — Client half: one sidebar-foot menu to the left of Settings.
  *
- * Registers into `sidebar.footer.action`. In the wide column the component
- * moves its own DOM node into the Settings trigger row (the first child of
- * the settings seat) so the gear is squeezed rather than covered. The rail
- * stays stacked — two 36px circles will not fit side-by-side in 56px.
+ * Registers into `sidebar.footer.action`. The official foot stacks that list
+ * above Settings. In the wide column we (1) CSS-flip the foot into a row and
+ * (2) move this node into the Settings triggerRow so it shares the gear's
+ * horizontal rhythm. Slot wrappers use `display: contents`, so the CSS
+ * selector must reach three levels deep. The rail stays stacked — two 36px
+ * circles will not fit side-by-side in 56px.
  *
  * Start is not in this menu; it is the desktop / CLI action. The four items
  * here POST `/api/dsh-rebooter/action` and the Host dispatches a detached CLI.
@@ -61,12 +63,30 @@ const MENU = [
 ]
 
 const STYLES = `
+/* Official footArea is a column. Reach past footerActions + display:contents
+   slot (three levels) so only the foot matches — not the sidebar root. */
+div:has(> * > * > [data-plugin="dsh-rebooter"].wide) {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 0;
+}
+div:has(> * > * > [data-plugin="dsh-rebooter"].wide) > * {
+  width: auto !important;
+  flex: none;
+  min-width: 0;
+}
+div:has(> * > * > [data-plugin="dsh-rebooter"].wide) > *:last-child {
+  flex: 1 1 auto;
+}
 .dsh-rebooter {
   position: relative;
   flex: none;
   display: flex;
   align-items: center;
   z-index: 2;
+}
+.dsh-rebooter.wide {
+  margin: 0;
 }
 .dsh-rebooter-btn {
   display: inline-flex;
@@ -148,6 +168,7 @@ const STYLES = `
   font-size: 12px;
   line-height: 16px;
 }
+
 `
 
 function PowerIcon({ size }) {
@@ -183,17 +204,94 @@ function t(key) {
   return locale.t(key)
 }
 
-function findSettingsTriggerRow(node) {
-  const actions = node && node.parentElement
-  const foot = actions && actions.parentElement
-  if (!foot) return undefined
-  for (let index = 0; index < foot.children.length; index += 1) {
-    const child = foot.children[index]
-    if (child === actions) continue
-    const row = child.firstElementChild
-    if (row) return row
+/** Walk up to the foot that owns both footer actions and the settings seat. */
+function findFoot(node) {
+  if (node && node.closest) {
+    const tagged = node.closest('[data-dsh-rebooter-foot]')
+    if (tagged) return tagged
+  }
+  let el = node && node.parentElement
+  while (el) {
+    let hasUs = false
+    let hasDialog = false
+    let dialogIsDirect = false
+    for (let index = 0; index < el.children.length; index += 1) {
+      const child = el.children[index]
+      if (
+        child === node
+        || child.contains(node)
+        || (child.querySelector && child.querySelector('[data-plugin="dsh-rebooter"]'))
+      ) {
+        hasUs = true
+      }
+      if (child.matches && child.matches('button[aria-haspopup="dialog"]')) {
+        hasDialog = true
+        dialogIsDirect = true
+      } else if (child.querySelector && child.querySelector('button[aria-haspopup="dialog"]')) {
+        hasDialog = true
+      }
+    }
+    // triggerRow also has us + the dialog button as direct children — keep climbing.
+    if (hasUs && hasDialog && dialogIsDirect !== true && el.children.length >= 2) {
+      return el
+    }
+    el = el.parentElement
   }
   return undefined
+}
+
+/** Settings triggerRow: the flex parent of the gear button. */
+function findSettingsTriggerRow(node) {
+  const foot = findFoot(node)
+  if (foot) {
+    for (let index = 0; index < foot.children.length; index += 1) {
+      const child = foot.children[index]
+      const button = child.querySelector
+        && child.querySelector('button[aria-haspopup="dialog"]')
+      if (button && button.parentElement) return button.parentElement
+    }
+  }
+  // Already parked beside the gear: parent is the row.
+  if (node && node.parentElement) {
+    const sibling = node.parentElement.querySelector('button[aria-haspopup="dialog"]')
+    if (sibling) return node.parentElement
+  }
+  return undefined
+}
+
+function applyWideFootStyle(foot) {
+  foot.setAttribute('data-dsh-rebooter-foot', '')
+  foot.style.flexDirection = 'row'
+  foot.style.alignItems = 'center'
+  for (let index = 0; index < foot.children.length; index += 1) {
+    const child = foot.children[index]
+    child.style.width = 'auto'
+    child.style.flex = 'none'
+    child.style.minWidth = '0'
+  }
+  const last = foot.lastElementChild
+  if (last) last.style.flex = '1 1 auto'
+}
+
+function clearWideFootStyle(foot) {
+  foot.removeAttribute('data-dsh-rebooter-foot')
+  foot.style.flexDirection = ''
+  foot.style.alignItems = ''
+  for (let index = 0; index < foot.children.length; index += 1) {
+    const child = foot.children[index]
+    child.style.width = ''
+    child.style.flex = ''
+    child.style.minWidth = ''
+  }
+}
+
+function placeBesideSettings(node) {
+  const foot = findFoot(node)
+  if (foot) applyWideFootStyle(foot)
+  const row = findSettingsTriggerRow(node)
+  if (row === undefined) return false
+  if (node.parentElement !== row) row.insertBefore(node, row.firstChild)
+  return true
 }
 
 async function postAction(action) {
@@ -215,26 +313,63 @@ function RebooterMenu(props) {
   const wide = props.wide === true
   const translate = typeof props.t === 'function' ? props.t : t
   const rootRef = ReactLib.useRef(null)
+  const homeRef = ReactLib.useRef(null)
   const [open, setOpen] = ReactLib.useState(false)
   const [busy, setBusy] = ReactLib.useState(false)
   const [error, setError] = ReactLib.useState('')
 
+  // Wide: park beside the gear. Observe the foot (not the whole document).
+  // A short poll covers settings mounting a frame later than this slot.
   ReactLib.useLayoutEffect(() => {
     const node = rootRef.current
     if (node === null) return undefined
-    const home = node.parentElement
-    if (wide !== true) return undefined
-    const row = findSettingsTriggerRow(node)
-    if (row === undefined) return undefined
-    row.insertBefore(node, row.firstChild)
-    return () => {
+    if (homeRef.current === null) homeRef.current = node.parentElement
+    const home = homeRef.current
+
+    if (wide !== true) {
+      const foot = findFoot(node)
+      if (foot) clearWideFootStyle(foot)
       try {
-        if (home) home.appendChild(node)
-      } catch {
-        /* unmounting */
-      }
+        if (home && node.parentElement !== home) home.appendChild(node)
+      } catch { /* unmounting */ }
+      return undefined
+    }
+
+    placeBesideSettings(node)
+
+    const observeTarget = findFoot(node) || (home && home.parentElement) || home
+    const observer = typeof MutationObserver === 'function' && observeTarget
+      ? new MutationObserver(() => { placeBesideSettings(node) })
+      : null
+    if (observer && observeTarget) {
+      observer.observe(observeTarget, { childList: true, subtree: true })
+    }
+    const timer = typeof setInterval === 'function'
+      ? setInterval(() => { placeBesideSettings(node) }, 100)
+      : 0
+    const stop = typeof setTimeout === 'function' && timer
+      ? setTimeout(() => { clearInterval(timer) }, 2000)
+      : 0
+
+    return () => {
+      if (observer) observer.disconnect()
+      if (timer) clearInterval(timer)
+      if (stop) clearTimeout(stop)
+      const currentFoot = findFoot(node)
+      if (currentFoot) clearWideFootStyle(currentFoot)
+      try {
+        if (home && node.parentElement !== home) home.appendChild(node)
+      } catch { /* unmounting */ }
     }
   }, [wide])
+
+  // React may put the node back under footerActions on local state updates.
+  ReactLib.useLayoutEffect(() => {
+    if (wide !== true) return
+    const node = rootRef.current
+    if (node === null) return
+    placeBesideSettings(node)
+  }, [wide, open, busy, error])
 
   ReactLib.useEffect(() => {
     if (open !== true) return undefined
@@ -304,7 +439,8 @@ function RebooterMenu(props) {
 export const inject = ['slots', 'locale']
 
 export const __testing = {
-  COPY, MENU, NS, findSettingsTriggerRow, postAction, RebooterMenu, PowerIcon,
+  COPY, MENU, NS, findFoot, findSettingsTriggerRow, placeBesideSettings,
+  postAction, RebooterMenu, PowerIcon,
 }
 
 export function apply(ctx) {

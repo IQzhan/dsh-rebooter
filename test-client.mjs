@@ -30,7 +30,9 @@ check('the menu does not include start', /menu\.start/.test(source), false)
 check('the client registers sidebar.footer.action', source.includes("name: 'sidebar.footer.action'"), true)
 check('the client uses its own list id', source.includes("id: 'dsh-rebooter'"), true)
 check('React is not read at module top level', /^\s*const E = React\.createElement/m.test(source), false)
-check('the settings squeeze only moves this plugin\'s node', source.includes('insertBefore(node, row.firstChild)'), true)
+check('wide foot layout reaches past display:contents slot', source.includes('> * > * > [data-plugin="dsh-rebooter"].wide'), true)
+check('wide mode moves this plugin into the settings trigger row', source.includes('insertBefore(node, row.firstChild)'), true)
+check('wide foot layout does not rewrite sidebar.settings', source.includes("name: 'sidebar.settings'"), false)
 
 const failed = results.filter(result => !result.ok)
 for (const result of results) {

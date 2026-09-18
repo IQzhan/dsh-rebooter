@@ -12,7 +12,7 @@ This document records **why** `dsh-rebooter` is shaped the way it is. The instal
 | `update-stop` | yes | yes |
 | `update-restart` | yes | yes |
 
-The four in-app items sit on **one** `sidebar.footer.action` control, parked to the **left** of Settings in the wide sidebar by moving only this plugin's DOM node into the settings trigger row. The rail stays stacked: two 36px circles do not fit in 56px.
+The four in-app items sit on **one** `sidebar.footer.action` control, parked to the **left** of Settings in the wide sidebar: CSS flips the official column foot into a row, and the component moves only its own node into the settings trigger row. The rail stays stacked: two 36px circles do not fit in 56px.
 
 ## Persistence without Windows
 

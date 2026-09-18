@@ -104,7 +104,7 @@ Client 与 Host 的对话优先走：
 - 用 `ctx.slots.inject('<slot>', () => ctx.slots.register({ name, id, order, locale, label }, Component))`。
 - **新 id** 加在已有条目旁边；**复用已有 id** 会换掉那一格。
 - 设置页导航图标由壳硬编码，第三方 section 没有图标字段。
-- 侧栏「设置」旁边的公开座位是 `sidebar.footer.action`（list）。壳把 footer actions 画在设置按钮**上方**；若视觉上要在设置左边，只能在自己的组件里把**自己的** DOM 节点挪到设置 trigger 行里，**禁止**改写或换掉 `sidebar.settings`。
+- 侧栏「设置」旁边的公开座位是 `sidebar.footer.action`（list）。壳把 footer actions 画在设置按钮**上方**；若视觉上要在设置左边，可用 CSS（例如 `:has` 把脚部改成横向）并/或把**自己的** DOM 节点挪进设置 trigger 行，**禁止**改写或换掉 `sidebar.settings`。
 - 文案：`ctx.locale.register(NS, { zh, en })` + `ctx.locale.bind(NS)`。源码字符串里除字典与注释外不得出现中日韩字符。两种语言的键集合必须一致。
 
 第三方 Client 包的 `external` 默认只有 `react`。不要 `require('@deepseek-ai/dsh-client-ui-primitives')`——模块表里没有就加载失败。图标用手写 SVG，样式用 `styles.insert(css)` 或自建 `<style data-plugin>`，颜色走 DSH 的 CSS 变量（`--dsw-alias-*`）。
