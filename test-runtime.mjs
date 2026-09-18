@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import {
   beginJob, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
   killPid, launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout,
-  pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, requestStopFiles,
+  performAction, pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, requestStopFiles,
   resolveHome, sendControl, sleep, spawnProcess, startControlServer, statePaths, writePanelPrefs,
   writePidFile,
 } from './dsh-rebooter-runtime.js'
@@ -107,6 +107,13 @@ try {
   check('panel prefs default openApp null', prefs.openApp, null)
   beginJob(paths, 'start', 'starting')
   check('beginJob marks busy', readJob(paths).state, 'busy')
+  let refused = false
+  try {
+    await performAction('stop', { home, trackJob: true })
+  } catch (error) {
+    refused = error instanceof Error && error.message === 'busy'
+  }
+  check('a busy job is not started again', refused, true)
   endJob(paths, 'ok', 'done')
   check('endJob marks ok', readJob(paths).state, 'ok')
 

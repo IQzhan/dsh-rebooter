@@ -43,4 +43,4 @@
 
 ## 生成入口
 
-`dsh-rebooter desktop` 与 Host 挂载时写入。入口在已安装插件的 `panel/` 里，用自身位置找到 `lib/cli.cjs`，不写死本机路径。桌面只放名为 **DSH Server** 的快捷方式，图标是 `dsh-server.ico`。写快捷方式的临时文件不放在桌面。窗口宿主装在插件自己的 `node_modules` 里，换机器执行构建即可，不必依赖这份源码目录。
+`dsh-rebooter desktop` 与 Host 挂载时写入。入口在已安装插件的 `panel/` 里，用自身位置找到 `lib/cli.cjs`，不写死本机路径。桌面入口名为 **DSH Server**：Windows 快捷方式图标是 `dsh-server.ico`，Linux 用 `dsh-server.png`，macOS 是 `.app`（不留终端）。窗口组件起不来时，同一页面改由系统默认方式打开。文案只有 `zh` / `en` 两套，跟界面语言走。写快捷方式的临时文件不放在桌面。窗口宿主装在插件自己的 `node_modules` 里，需要 `Node 24`。换机器执行构建即可。

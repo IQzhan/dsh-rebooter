@@ -58,6 +58,18 @@ try {
   check('status-panel design doc exists', existsSync(join(process.cwd(), 'docs', 'status-panel.md')), true)
   check('status-panel zh doc exists', existsSync(join(process.cwd(), 'docs', 'status-panel.zh.md')), true)
   check('design mentions DSH Server', readFileSync(join(process.cwd(), 'docs', 'status-panel.md'), 'utf8').includes('DSH Server'), true)
+
+  const panelSource = readFileSync(join(process.cwd(), 'dsh-rebooter-panel.js'), 'utf8')
+  const copyBlock = /const COPY = \{([\s\S]*?)\n\}/.exec(panelSource)
+  check('panel has a COPY dictionary', copyBlock !== null, true)
+  const withoutCopy = panelSource.replace(copyBlock?.[0] ?? '', '')
+    .split('\n')
+    .filter(line => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'))
+    .join('\n')
+  check('panel CJK lives only in the dictionary and comments', /[\u4e00-\u9fff]/.test(withoutCopy), false)
+  const zhKeys = [...(/zh: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
+  const enKeys = [...(/en: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
+  check('panel zh and en expose the same keys', [...zhKeys].sort(), [...enKeys].sort())
 } finally {
   cleanup(home)
 }

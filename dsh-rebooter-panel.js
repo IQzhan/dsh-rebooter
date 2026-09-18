@@ -15,7 +15,7 @@ import {
 } from './dsh-rebooter-core.js'
 import {
   cliPathFromHost, ensureStateDir, isWebListening,
-  logSupervisor, openDshUi, performAction, readJob, readLayout,
+  logSupervisor, openDshUi, openUrl, performAction, readJob, readLayout,
   readPanelPrefs, readText, readWebUrl, spawnDetached, statePaths, writePanelPrefs,
 } from './dsh-rebooter-runtime.js'
 
@@ -32,7 +32,7 @@ async function buildSnapshot(paths, layout) {
 
 function panelPageHtml() {
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -139,47 +139,92 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
 <header class="titlebar" id="titlebar">
   <span>DSH Server</span>
   <div class="winbtns">
-    <button type="button" id="btnMin" title="最小化" aria-label="最小化">${iconMin()}</button>
-    <button type="button" id="btnClose" class="close" title="关闭" aria-label="关闭">${iconClose()}</button>
+    <button type="button" id="btnMin" title="Minimize" aria-label="Minimize">${iconMin()}</button>
+    <button type="button" id="btnClose" class="close" title="Close" aria-label="Close">${iconClose()}</button>
   </div>
 </header>
 <main>
   <section class="status" id="statusStrip">
     <div class="dot"></div>
-    <div class="status-text" id="statusText">加载中…</div>
+    <div class="status-text" id="statusText">Loading…</div>
     <div class="spinner"></div>
   </section>
   <div class="actions" id="actions"></div>
   <div class="open-row" id="openRow">
-    <button type="button" class="primary" id="btnOpen">打开界面</button>
-    <button type="button" class="iconbtn" id="btnGear" title="绑定程序">${iconGear()}</button>
-    <button type="button" class="iconbtn hidden" id="btnClearApp" title="清除绑定">${iconClear()}</button>
-    <label><input type="checkbox" id="autoOpen"/> 启动时打开界面</label>
+    <button type="button" class="primary" id="btnOpen">Open UI</button>
+    <button type="button" class="iconbtn" id="btnGear" title="Bind a program">${iconGear()}</button>
+    <button type="button" class="iconbtn hidden" id="btnClearApp" title="Clear binding">${iconClear()}</button>
+    <label><input type="checkbox" id="autoOpen"/> <span id="autoOpenLabel">Open UI when DSH starts</span></label>
   </div>
   <div class="bind-row hidden" id="bindRow">
-    <input id="bindPath" type="text" spellcheck="false" placeholder="程序路径，或点浏览选择"/>
-    <button type="button" id="btnBrowse">浏览</button>
-    <button type="button" class="primary" id="btnBindOk">确定</button>
-    <button type="button" id="btnBindCancel">取消</button>
+    <input id="bindPath" type="text" spellcheck="false" placeholder="Program path, or browse"/>
+    <button type="button" id="btnBrowse">Browse</button>
+    <button type="button" class="primary" id="btnBindOk">OK</button>
+    <button type="button" id="btnBindCancel">Cancel</button>
   </div>
   <pre class="log" id="logPane"></pre>
 </main>
 </div>
 <script>
 (function () {
-  const LABELS = {
-    start: '启动',
-    update: '更新',
-    'update-restart': '更新并启动',
-    stop: '关闭',
-    restart: '重启',
+const COPY = {
+  zh: {
+    'min': '最小化',
+    'close': '关闭',
+    'loading': '加载中…',
+    'working': '正在执行…',
+    'failed': '上次操作失败',
+    'running': 'DSH 运行中',
+    'stopped': 'DSH 已停止',
+    'busy': '已有任务进行中',
+    'open': '打开界面',
+    'bind': '绑定程序',
+    'clear': '清除绑定',
+    'autoOpen': '启动时打开界面',
+    'pathPlaceholder': '程序路径，或点浏览选择',
+    'browse': '浏览',
+    'ok': '确定',
+    'cancel': '取消',
+    'start': '启动',
+    'update': '更新',
+    'update-start': '更新并启动',
+    'update-restart': '更新并重启',
+    'stop': '关闭',
+    'restart': '重启',
     'update-stop': '更新并关闭',
-    open: '打开界面',
-  };
+  },
+  en: {
+    'min': 'Minimize',
+    'close': 'Close',
+    'loading': 'Loading…',
+    'working': 'Working…',
+    'failed': 'Last action failed',
+    'running': 'DSH is running',
+    'stopped': 'DSH is stopped',
+    'busy': 'Another action is already running',
+    'open': 'Open UI',
+    'bind': 'Bind a program',
+    'clear': 'Clear binding',
+    'autoOpen': 'Open UI when DSH starts',
+    'pathPlaceholder': 'Program path, or browse',
+    'browse': 'Browse',
+    'ok': 'OK',
+    'cancel': 'Cancel',
+    'start': 'Start',
+    'update': 'Update',
+    'update-start': 'Update and start',
+    'update-restart': 'Update and restart',
+    'stop': 'Stop',
+    'restart': 'Restart',
+    'update-stop': 'Update and stop',
+  },
+}
+  const lang = (navigator.language || '').toLowerCase().startsWith('zh') ? 'zh' : 'en';
+  const t = COPY[lang];
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   function labelFor(action, running) {
-    if (action === 'update-restart') return running ? '更新并重启' : '更新并启动';
-    if (action === 'open') return '打开界面';
-    return LABELS[action] || action;
+    if (action === 'update-restart') return running ? t['update-restart'] : t['update-start'];
+    return t[action] || action;
   }
   const $ = (id) => document.getElementById(id);
   const statusStrip = $('statusStrip');
@@ -262,10 +307,10 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
     statusStrip.classList.toggle('busy', busy);
     statusStrip.classList.toggle('error', err);
     let text = '';
-    if (busy) text = job.message || '正在执行…';
-    else if (err) text = job.message || job.error || '上次操作失败';
-    else if (s.running) text = 'DSH 运行中';
-    else text = 'DSH 已停止';
+    if (busy) text = job.action ? labelFor(job.action, s.running === true) : t.working;
+    else if (err) text = t.failed;
+    else if (s.running) text = t.running;
+    else text = t.stopped;
     statusText.textContent = text;
     const showLog = busy || err;
     logPane.classList.toggle('visible', showLog);
@@ -302,7 +347,7 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
 
   async function runAction(action) {
     const { ok, status, data } = await postJson('/api/action', { action });
-    if (status === 409) statusText.textContent = '已有任务进行中';
+    if (status === 409) statusText.textContent = t.busy;
     else if (!ok && data.error) statusText.textContent = data.error;
   }
 
@@ -373,6 +418,29 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
     fitWindow();
   };
 
+  function applyChrome() {
+    $('btnMin').title = t.min;
+    $('btnMin').setAttribute('aria-label', t.min);
+    $('btnClose').title = t.close;
+    $('btnClose').setAttribute('aria-label', t.close);
+    $('btnOpen').textContent = t.open;
+    btnGear.title = t.bind;
+    btnClearApp.title = t.clear;
+    $('autoOpenLabel').textContent = t.autoOpen;
+    bindPath.placeholder = t.pathPlaceholder;
+    $('btnBrowse').textContent = t.browse;
+    $('btnBindOk').textContent = t.ok;
+    $('btnBindCancel').textContent = t.cancel;
+    statusText.textContent = t.loading;
+    fetch('/api/frame').then(r => r.json()).then(info => {
+      if (!info || info.ok !== true) {
+        const buttons = document.querySelector('.winbtns');
+        if (buttons) buttons.classList.add('hidden');
+      }
+    }).catch(() => {});
+  }
+  applyChrome();
+
   tick();
   setInterval(tick, 500);
 })();
@@ -432,6 +500,11 @@ function runActionBackground(paths, layout, action) {
   })()
 }
 
+function panelHostAllowed(header, port) {
+  const value = String(header || '').trim().toLowerCase()
+  return value === `127.0.0.1:${port}` || value === `localhost:${port}`
+}
+
 function startPanelServer(paths, layout, options = {}) {
   let focusRequested = false
   const html = panelPageHtml()
@@ -441,6 +514,10 @@ function startPanelServer(paths, layout, options = {}) {
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${host}:${port}`)
     const path = url.pathname.replace(/\/+$/, '') || '/'
+    if (!panelHostAllowed(req.headers.host, port)) {
+      sendJson(res, 403, { ok: false, error: 'forbidden' })
+      return
+    }
 
     try {
       if (req.method === 'GET' && (path === '' || path === '/' || path === '/panel')) {
@@ -600,7 +677,7 @@ function applyFrameOp(body) {
     let files = []
     try {
       files = shell.openFileDialog({
-        title: '选择要绑定的程序',
+        title: 'Select a program',
         multiple: false,
       }) || []
     } catch (error) {
@@ -709,12 +786,14 @@ async function postFrame(url, body) {
 
 async function openPanelWindow(url, paths, options = {}) {
   if (typeof url !== 'string' || url.length === 0) return false
-  if (options.reuse === true) {
-    const shown = await postFrame(url, { op: 'show' })
-    if (!shown) logSupervisor(paths, 'running panel has no frameless window to show')
-    return shown
+  const shown = options.reuse === true
+    ? await postFrame(url, { op: 'show' })
+    : await showFrameless(url, paths)
+  if (!shown) {
+    logSupervisor(paths, 'panel window unavailable; opening with the default handler')
+    openUrl(url)
   }
-  return showFrameless(url, paths)
+  return shown
 }
 
 function forever() {

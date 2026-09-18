@@ -26,7 +26,7 @@ This plugin's equivalent is a **detached Node supervisor** (no console window):
 
 1. The Host half, on mount, records `process.execPath` / `execArgv` / `argv` / `cwd` / `DSH_HOME` under `$DSH_HOME/rebooter/`.
 2. The Host **adopts** the supervisor once: if a CLI-spawned supervisor is already listening, it is `release`d (exits without signalling DSH) and a new one is spawned from the Host. That way the long-lived Host owns the watcher and a launcher Job Object cannot kill it. No heartbeat — DSH is never killed to "heal".
-3. The supervisor `listen`s on `127.0.0.1:(webPort+10000)`. That bind is the singleton lock — a second start exits, and a second `dsh-rebooter start` only opens the browser (after asking the living Host to re-adopt if needed).
+3. The supervisor `listen`s on `127.0.0.1:(webPort+10000)`. That bind is the singleton lock — a second start exits. A second `dsh-rebooter start` does not open the browser unless `autoOpen` is set or `--open` is passed.
 4. If the recorded host pid exits on its own and no stop was requested, the supervisor relaunches the same argv (always with `--no-open`). A running host is never SIGTERM'd except by explicit `stop` / `restart` / `update-*`.
 5. `stop` writes a stopping file, asks the control port to quit, then signals the recorded pids.
 

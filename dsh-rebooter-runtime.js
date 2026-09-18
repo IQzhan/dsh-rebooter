@@ -13,7 +13,7 @@ import {
   ALL_ACTIONS, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, LAYOUT_VERSION, STATE_DIR_NAME,
   availableActions, backoffDelay, captureLaunch, canonicalUrl, controlPort, defaultPanelPrefs,
   idleJob, isAction, isPidAlive, panelPort, parseWebUrl, pluginUpdateArgs, shouldOpenUi,
-  spawnArgv, withNoOpen,
+  spawnArgv, webIndex, withNoOpen,
 } from './dsh-rebooter-core.js'
 import {
   appendFileSync, chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync,
@@ -472,7 +472,10 @@ function writeWindowsShortcut(lnkPath, target, args, options = {}) {
   lines.push('s.Save')
   writeText(helper, `${lines.join('\r\n')}\r\n`)
   try {
-    spawnSync('cscript.exe', ['//nologo', helper], { windowsHide: true, encoding: 'utf8' })
+    const result = spawnSync('cscript.exe', ['//nologo', helper], { windowsHide: true, encoding: 'utf8' })
+    if (result.status !== 0) {
+      throw new Error(`could not write shortcut (${result.status ?? 'error'})`)
+    }
   } finally {
     removeFile(helper)
   }
@@ -487,8 +490,18 @@ function removeShortcutHelpers(dir) {
   }
 }
 
+function copyIconAsset(dir, name) {
+  const dest = join(dir, name)
+  const designed = join(dirname(dirname(dir)), 'icons', name)
+  if (existsSync(designed)) {
+    try { copyFileSync(designed, dest) } catch { /* keep any copy already in dir */ }
+  }
+  return existsSync(dest) ? dest : null
+}
+
 /** Shortcut icon. A .vbs has no icon resource, so the shortcut must not point at it. */
 function writePanelIcon(dir) {
+  copyIconAsset(dir, 'dsh-server.png')
   const dest = join(dir, 'dsh-server.ico')
   const designed = join(dirname(dirname(dir)), 'icons', 'dsh-server.ico')
   if (existsSync(designed)) {
@@ -577,23 +590,40 @@ function installPanelEntry(node, cli, options = {}) {
         installed.push(lnk)
       }
     } else if (process.platform === 'darwin') {
-      const dest = join(desk, 'DSH Server.command')
-      writeText(dest, `#!/bin/sh\nexec /bin/sh ${JSON.stringify(entryPath)}\n`)
-      try { chmodSync(dest, 0o755) } catch { /* ignore */ }
+      // An .app runs the script without leaving Terminal open. A .command cannot.
+      const dest = join(desk, 'DSH Server.app')
+      const macos = join(dest, 'Contents', 'MacOS')
+      mkdirSync(macos, { recursive: true })
+      const bin = join(macos, 'DSH-Server')
+      writeText(bin, `#!/bin/sh\nexec /bin/sh ${JSON.stringify(entryPath)}\n`)
+      try { chmodSync(bin, 0o755) } catch { /* ignore */ }
+      writeText(join(dest, 'Contents', 'Info.plist'), [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0"><dict>',
+        '<key>CFBundleExecutable</key><string>DSH-Server</string>',
+        '<key>CFBundleIdentifier</key><string>app.dsh.server</string>',
+        '<key>CFBundleName</key><string>DSH Server</string>',
+        '<key>CFBundlePackageType</key><string>APPL</string>',
+        '</dict></plist>',
+        '',
+      ].join('\n'))
       installed.push(dest)
     } else {
       const dest = join(desk, 'DSH Server.desktop')
       const pkg = dirname(panelDir)
-      writeText(dest, [
+      const pngIcon = join(panelDir, 'dsh-server.png')
+      const lines = [
         '[Desktop Entry]',
         'Type=Application',
         'Name=DSH Server',
         `Exec=${JSON.stringify(entryPath)}`,
         `Path=${pkg}`,
         'Terminal=false',
-        `Icon=${iconPath}`,
-        '',
-      ].join('\n'))
+      ]
+      if (existsSync(pngIcon)) lines.push(`Icon=${pngIcon}`)
+      lines.push('')
+      writeText(dest, lines.join('\n'))
       try { chmodSync(dest, 0o755) } catch { /* ignore */ }
       installed.push(dest)
     }
@@ -606,7 +636,7 @@ function installPanelEntry(node, cli, options = {}) {
         removeFile(join(desk, `DSH-${action}${legacyExt}`))
       }
     }
-    for (const legacy of ['DSH.vbs', 'DSH.cmd', 'DSH.command', 'DSH.desktop']) {
+    for (const legacy of ['DSH.vbs', 'DSH.cmd', 'DSH.command', 'DSH.desktop', 'DSH Server.command']) {
       removeFile(join(desk, legacy))
     }
   }
@@ -995,22 +1025,47 @@ async function requestHostAdoptSupervisor(layout) {
   }
 }
 
+function jobLockPath(paths) {
+  return join(paths.root, 'job.lock')
+}
+
+function releaseJob(paths) {
+  removeFile(jobLockPath(paths))
+}
+
+function claimJob(paths) {
+  if (readJob(paths).state === 'busy') return false
+  const lock = jobLockPath(paths)
+  const tryCreate = () => {
+    closeSync(openSync(lock, 'wx'))
+  }
+  try {
+    tryCreate()
+    return true
+  } catch (error) {
+    if (!error || error.code !== 'EEXIST') throw error
+    let stale = false
+    try { stale = readJob(paths).state !== 'busy' && Date.now() - statSync(lock).mtimeMs > 30000 } catch { stale = true }
+    if (!stale) return false
+    removeFile(lock)
+    try { tryCreate() } catch { return false }
+    return true
+  }
+}
+
 async function performAction(action, options = {}) {
   if (!isAction(action)) throw new Error(`unknown action ${JSON.stringify(action)}`)
   const paths = ensureStateDir(statePaths(options.home))
-  const layout = resolveLayout(paths, options)
-  const fromHost = options.fromHost === true
-  const prefs = readPanelPrefs(paths)
-  const open = shouldOpenUi(action, options, prefs)
   const trackJob = options.trackJob !== false
-  const alreadyBusy = readJob(paths).state === 'busy'
-
-  if (trackJob && !alreadyBusy) {
-    beginJob(paths, action, `running ${action}`)
-  }
-  if (fromHost && action !== 'start') await sleep(400)
+  if (trackJob && !claimJob(paths)) throw new Error('busy')
 
   try {
+    const layout = resolveLayout(paths, options)
+    const fromHost = options.fromHost === true
+    const prefs = readPanelPrefs(paths)
+    const open = shouldOpenUi(action, options, prefs)
+    if (trackJob) beginJob(paths, action, `running ${action}`)
+    if (fromHost && action !== 'start') await sleep(400)
     if (action === 'open') {
       const result = openDshUi(paths, layout)
       if (trackJob) endJob(paths, 'ok', 'UI opened')
@@ -1070,6 +1125,8 @@ async function performAction(action, options = {}) {
       endJob(paths, 'error', 'failed', error instanceof Error ? error.message : String(error))
     }
     throw error
+  } finally {
+    if (trackJob) releaseJob(paths)
   }
 }
 

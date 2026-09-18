@@ -191,6 +191,9 @@ const manifest = {
   dependencies: {
     '@webviewjs/webview': '^0.4.5',
   },
+  engines: {
+    node: '>=24',
+  },
 }
 
 const bundlePatch = `# ${PLUGIN_NAME} bundle patch.
@@ -220,8 +223,12 @@ await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
 ].join('\n'), 'utf8')
 
 const designedIcon = join(here, 'icons', 'dsh-server.ico')
+const designedPng = join(here, 'icons', 'dsh-server.png')
 if (existsSync(designedIcon)) {
   await copyFile(designedIcon, join(OUT_PACKAGE, 'panel', 'dsh-server.ico'))
+}
+if (existsSync(designedPng)) {
+  await copyFile(designedPng, join(OUT_PACKAGE, 'panel', 'dsh-server.png'))
 }
 
 const hostInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', '@webviewjs', 'webview'))

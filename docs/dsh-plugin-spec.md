@@ -134,7 +134,8 @@ Client 与 Host 的对话优先走：
 | 源码/产物里的绝对路径（盘符、本机用户目录） | 换机器即错 |
 | 系统临时目录 API、Windows 专有的用户主目录变量 | 测试垃圾落到系统盘；主目录用 homedir / `DSH_HOME` |
 | 无平台判断的目录联接类型 | POSIX 构建失败 |
-| 运行时依赖 PowerShell / 计划任务 / Win32 / VBS / `taskkill` | 把插件绑死在 Windows |
+| 运行时依赖 PowerShell / 计划任务 / Win32 / `taskkill` | 把插件绑死在 Windows |
+| 用 VBS 实现启动、关闭、监督或单例 | 生命周期必须留在 Node。Windows 桌面快捷方式可以指向 `wscript.exe`，只为了双击时不弹出控制台；macOS 用 `.app`，Linux 用 `Terminal=false` 的 `.desktop` |
 | 界面中文写死在非字典位置 | 英文语言下漏出中文 |
 
 允许的平台分支：**真正的运行时差异**写在一处（例如 `.cmd` 必须经 `cmd.exe` 启动、打开 URL 的 `open` / `xdg-open` / `cmd start`）。分支必须有对应的非 Windows 路径，且默认路径不能假设 Windows。
@@ -154,7 +155,7 @@ Client 与 Host 的对话优先走：
 | 持久常驻 | 监督进程与所启动的 Web 宿主都 `detached`，不依附终端；Web 异常退出则监督进程拉起下一代，直到显式关闭 |
 | 不重复启动 | 监督进程对本机 control 端口的 `listen` 是单例锁；已在服务则只打开浏览器 |
 
-不要用 Windows 计划任务、命名互斥体、Win32 优先级、VBS 隐藏启动器来实现上述四点——那些是某台机器上的启动脚本，不是插件。
+不要用 Windows 计划任务、命名互斥体、Win32 优先级来实现上述四点。Windows 快捷方式可以调用 `wscript.exe`，只负责藏起控制台；它不负责拉起或看守 DSH。macOS 桌面入口是 `.app`，避免 `.command` 把终端留在前台。Linux 用 `Terminal=false` 的 `.desktop`。
 
 更新「所有插件」走 DSH 自己的接口：
 

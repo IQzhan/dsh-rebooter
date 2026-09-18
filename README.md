@@ -30,6 +30,8 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
+Requires `Node 24` or newer. The panel window uses the OS web view: `WebView2` on Windows, system WebKit on macOS, `WebKitGTK` on Linux. If that runtime is missing, the same page opens with the default URL handler. The panel follows the UI language (`zh` or `en`).
+
 Then restart `dsh web`. Host mount also tries to write the panel entry. To (re)write it by hand:
 
 ```bash
@@ -69,7 +71,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 node verify.mjs
 ```
 
-**8 suites, 166 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 171 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

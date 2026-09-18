@@ -92,6 +92,8 @@ const wscriptCodeLines = runtime.split('\n')
 check('supervisor path does not use WScript', wscriptCodeLines, [])
 check('desktop launcher may use WScript for a windowless start', /WScript\.Shell/.test(runtime), true)
 check('desktop shortcut targets wscript host string', /wscript\.exe/.test(runtime), true)
+check('darwin desktop entry is an app bundle, not a terminal command',
+  runtime.includes("'DSH Server.app'") && !/join\(desk, 'DSH Server\.command'\)/.test(runtime), true)
 check('runtime does not read or rewrite proxy environment',
   /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
 

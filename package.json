@@ -9,7 +9,7 @@
     "test": "node run-tests.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "dependencies": {
     "@webviewjs/webview": "^0.4.5"
