@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文**
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**启动 / 关闭 / 重启 / 更新**的插件：侧栏「设置」左侧一个菜单，桌面一个启动器。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**启动 / 关闭 / 重启 / 更新**的插件：侧栏「设置」左侧一个菜单，桌面五个可双击入口。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
 
 制作规范见 [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md)；设计取舍见 [`docs/design-notes.md`](docs/design-notes.md)。
 
@@ -27,12 +27,13 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-然后重启 `dsh web`。把启动放到桌面：
+然后重启 `dsh web`。一条命令在桌面写入五个可双击入口（后缀随系统：`.vbs` / `.command` / `.desktop`）：
 
 ```bash
 node package/lib/cli.cjs desktop
-node package/lib/cli.cjs start
 ```
+
+会生成 `DSH-start`、`DSH-stop`、`DSH-restart`、`DSH-update-stop`、`DSH-update-restart`。双击 `DSH-start` 即可启动并打开浏览器。
 
 ## 更新 / 卸载
 
@@ -63,7 +64,7 @@ git pull && node build-rebooter.mjs
 node verify.mjs
 ```
 
-**7 个套件、127 条断言**：策略核心 · 运行时 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**7 个套件、134 条断言**：策略核心 · 运行时 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 

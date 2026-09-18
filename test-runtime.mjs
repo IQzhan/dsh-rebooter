@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   ensureStateDir, envForHostAsync, envForOneShot, installDesktopLauncher, isWebListening, killPid,
-  launcherBody, launcherNames, listenControl, lookOnPath, mergeLayout, pidAlive,
+  launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout, pidAlive,
   probeHttp, readLayout, readPidFile, requestStopFiles, resolveHome, sendControl,
   sleep, spawnProcess, startControlServer, statePaths, writePidFile,
 } from './dsh-rebooter-runtime.js'
@@ -68,15 +68,26 @@ try {
   check('lookOnPath finds node', typeof lookOnPath('node') === 'string' || lookOnPath('node.exe') !== undefined, true)
 
   const names = launcherNames()
-  const body = launcherBody(names.kind, '/bin/node', '/opt/cli.cjs')
-  check('launcher names the start verb', body.includes('start'), true)
+  const body = launcherBody(names.kind, '/bin/node', '/opt/cli.cjs', 'start')
+  check('launcher names the start verb', body.includes(' start') || body.includes('"start"') || /\sstart(?:\n|"|,)/.test(body), true)
+  check('launcher does not pass --no-open', body.includes('--no-open'), false)
   check('launcher does not embed a machine Desktop path in source form', /[A-Za-z]:\\/.test(body), false)
+  check('launcher file uses the platform suffix', launcherFileName('start').endsWith(names.ext), true)
+
+  const vbsUpdate = launcherBody('vbs', 'C:\\Program Files\\nodejs\\node.exe', 'D:\\cli.cjs', 'update-restart')
+  check('vbs keeps update-restart inside one Run string',
+    /"" update-restart", 0, False/.test(vbsUpdate), true)
+  check('vbs separates quoted paths with space not triple-quote',
+    vbsUpdate.includes('"" ""') && !vbsUpdate.includes('"" """'), true)
 
   const fakeDesktop = join(home, 'Desktop')
   ensureStateDir({ root: fakeDesktop })
   const installed = installDesktopLauncher(process.execPath, join(home, 'cli.cjs'), fakeDesktop)
-  check('desktop launcher is written where asked', existsSync(installed), true)
-  check('and it still says start', readFileSync(installed, 'utf8').includes('start'), true)
+  check('desktop writes five launchers', Array.isArray(installed) && installed.length, 5)
+  check('every launcher file exists', installed.every(path => existsSync(path)), true)
+  check('start launcher invokes start', readFileSync(installed.find(p => p.includes('DSH-start')), 'utf8').includes(' start'), true)
+  check('stop launcher invokes stop', readFileSync(installed.find(p => p.includes('DSH-stop')), 'utf8').includes(' stop'), true)
+  check('legacy single DSH launcher is removed', existsSync(join(fakeDesktop, 'DSH.vbs')) || existsSync(join(fakeDesktop, 'DSH.cmd')), false)
 
   const control = startControlServer(async (request) => {
     if (request.op === 'ping') return { ok: true, pid: 7 }

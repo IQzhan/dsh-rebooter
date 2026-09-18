@@ -2,7 +2,7 @@
 
 **English** · [简体中文](README.zh.md)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start / stop / restart / update**. One menu to the left of Settings; a desktop launcher for start. Update stops DSH first, then upgrades **every plugin** in the current profile.
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start / stop / restart / update**. One menu to the left of Settings; five desktop launchers for the same actions. Update stops DSH first, then upgrades **every plugin** in the current profile.
 
 Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design notes: [`docs/design-notes.md`](docs/design-notes.md).
 
@@ -27,12 +27,13 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-Then restart `dsh web`. Put start on the desktop:
+Then restart `dsh web`. Write five double-click launchers to the Desktop (suffix follows the OS: `.vbs` / `.command` / `.desktop`):
 
 ```bash
 node package/lib/cli.cjs desktop
-node package/lib/cli.cjs start
 ```
+
+That creates `DSH-start`, `DSH-stop`, `DSH-restart`, `DSH-update-stop`, `DSH-update-restart`. Double-click `DSH-start` to start and open the browser.
 
 ## Update / uninstall
 
@@ -63,7 +64,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 node verify.mjs
 ```
 
-**7 suites, 127 assertions**: policy core · runtime · adapter · package · menu · bilingual docs · portability guard.
+**7 suites, 134 assertions**: policy core · runtime · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

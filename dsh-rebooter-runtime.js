@@ -10,12 +10,12 @@
  */
 
 import {
-  DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, LAYOUT_VERSION, STATE_DIR_NAME,
+  ALL_ACTIONS, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, LAYOUT_VERSION, STATE_DIR_NAME,
   backoffDelay, captureLaunch, canonicalUrl, controlPort, isAction, isPidAlive,
   parseWebUrl, pluginUpdateArgs, spawnArgv, withNoOpen,
 } from './dsh-rebooter-core.js'
 import {
-  appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
+  appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
   rmSync, writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
@@ -391,40 +391,54 @@ function desktopDir() {
 
 function launcherNames() {
   if (process.platform === 'win32') {
-    // .vbs + Run(..., 0) is the desktop-only way to start with no console flash
-    // on Windows; the supervisor itself never uses VBS.
-    return { file: 'DSH.vbs', kind: 'vbs' }
+    // .vbs + Run(..., 0): desktop-only silent double-click on Windows.
+    return { kind: 'vbs', ext: '.vbs' }
   }
   if (process.platform === 'darwin') {
-    return { file: 'DSH.command', kind: 'command' }
+    return { kind: 'command', ext: '.command' }
   }
-  return { file: 'DSH.desktop', kind: 'desktop' }
+  return { kind: 'desktop', ext: '.desktop' }
 }
 
-function quoteForCmd(value) {
-  return `"${String(value).replace(/"/g, '""')}"`
+function launcherFileName(action, ext = launcherNames().ext) {
+  return `DSH-${action}${ext}`
 }
 
 function quoteForVbs(value) {
   return String(value).replace(/"/g, '""')
 }
 
-function launcherBody(kind, node, cli) {
+function launcherTitle(action) {
+  return ({
+    start: 'DSH Start',
+    stop: 'DSH Stop',
+    restart: 'DSH Restart',
+    'update-stop': 'DSH Update Stop',
+    'update-restart': 'DSH Update Restart',
+  })[action] || `DSH ${action}`
+}
+
+function launcherBody(kind, node, cli, action = 'start') {
+  // Desktop start opens the browser (no --no-open) so a double-click is visible.
   if (kind === 'vbs') {
+    // One Run string: `"node" "cli" action`. Escape " as "" for VBScript.
+    // Never concatenate `"" """` between paths — that ends the string early and
+    // turns `update-restart` into a minus expression (编译错误 800A0401).
+    const command = `"${node}" "${cli}" ${action}`
     return [
       'Set sh = CreateObject("WScript.Shell")',
-      `sh.Run """${quoteForVbs(node)}"" """${quoteForVbs(cli)}"" start --no-open", 0, False`,
+      `sh.Run "${quoteForVbs(command)}", 0, False`,
       '',
     ].join('\r\n')
   }
   if (kind === 'command') {
-    return `#!/bin/sh\nexec ${JSON.stringify(node)} ${JSON.stringify(cli)} start --no-open\n`
+    return `#!/bin/sh\nexec ${JSON.stringify(node)} ${JSON.stringify(cli)} ${action}\n`
   }
   return [
     '[Desktop Entry]',
     'Type=Application',
-    'Name=DSH',
-    `Exec=${JSON.stringify(node)} ${JSON.stringify(cli)} start --no-open`,
+    `Name=${launcherTitle(action)}`,
+    `Exec=${JSON.stringify(node)} ${JSON.stringify(cli)} ${action}`,
     'Terminal=false',
     'Categories=Utility;',
     '',
@@ -433,12 +447,22 @@ function launcherBody(kind, node, cli) {
 
 function installDesktopLauncher(node, cli, dir = desktopDir()) {
   if (dir === undefined) return undefined
-  const { file, kind } = launcherNames()
-  const path = join(dir, file)
-  writeText(path, launcherBody(kind, node, cli))
-  // Prefer the silent Windows launcher; remove the older console .cmd if present.
-  if (kind === 'vbs') removeFile(join(dir, 'DSH.cmd'))
-  return path
+  mkdirSync(dir, { recursive: true })
+  const { kind, ext } = launcherNames()
+  const installed = []
+  for (const action of ALL_ACTIONS) {
+    const path = join(dir, launcherFileName(action, ext))
+    writeText(path, launcherBody(kind, node, cli, action))
+    if (kind === 'command' || kind === 'desktop') {
+      try { chmodSync(path, 0o755) } catch { /* best-effort executable bit */ }
+    }
+    installed.push(path)
+  }
+  // Remove the old single-file launchers if present.
+  for (const legacy of ['DSH.vbs', 'DSH.cmd', 'DSH.command', 'DSH.desktop']) {
+    removeFile(join(dir, legacy))
+  }
+  return installed
 }
 
 function sendControl(port, payload, timeoutMs = 2000) {
@@ -953,6 +977,7 @@ export {
   isWebListening,
   killPid,
   launcherBody,
+  launcherFileName,
   launcherNames,
   listenControl,
   logSupervisor,

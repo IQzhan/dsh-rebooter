@@ -55,8 +55,7 @@ There is no `git pull` of the harness checkout and no overlay dance. Those belon
 ## Start from the desktop
 
 ```
-node package/lib/cli.cjs start
 node package/lib/cli.cjs desktop
 ```
 
-`desktop` writes a double-clickable launcher onto the user's Desktop (`DSH.vbs` on Windows with no console, `DSH.command` / `DSH.desktop` elsewhere). The launcher is machine-local; the plugin source never embeds a Desktop path.
+One command writes **five** double-click launchers onto the user's Desktop. The suffix follows the OS (`.vbs` silent on Windows, `.command` on macOS, `.desktop` on Linux): `DSH-start`, `DSH-stop`, `DSH-restart`, `DSH-update-stop`, `DSH-update-restart`. `DSH-start` runs `start` (opens the browser); it does not use `--no-open`. Paths are machine-local; the plugin source never embeds a Desktop path.

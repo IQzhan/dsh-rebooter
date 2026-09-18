@@ -18,8 +18,8 @@ async function runCli(argv = process.argv) {
     const layout = readLayout(paths) || captureLaunch(process)
     const cli = cliPathFromHost()
     const installed = installDesktopLauncher(layout.node || process.execPath, cli)
-    if (installed === undefined) throw new Error('no Desktop directory')
-    return { ok: true, action: 'desktop', path: installed }
+    if (installed === undefined || installed.length === 0) throw new Error('no Desktop directory')
+    return { ok: true, action: 'desktop', paths: installed }
   }
   if (!isAction(action)) {
     throw new Error(`usage: dsh-rebooter <${ALL_ACTIONS.join('|')}|supervisor|desktop>`)
@@ -35,7 +35,7 @@ function printCliHelp() {
     '  restart           stop, then start',
     '  update-stop       stop, then update every profile plugin',
     '  update-restart    stop, update every profile plugin, then start',
-    '  desktop           write a Start launcher to the user Desktop',
+    '  desktop           write five double-click launchers to the user Desktop',
   ]
   return lines.join('\n')
 }
