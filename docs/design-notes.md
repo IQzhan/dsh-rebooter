@@ -28,17 +28,9 @@ This plugin's equivalent is a **detached Node supervisor** (no console window):
 
 Closing a terminal, Explorer, or the browser therefore does not end DSH. Only `stop` / `update-stop` does. Spawn uses Node `detached` + `windowsHide` + ignored stdio — no console titled by `process.title`, and no PowerShell / schtasks / VBS on the supervisor hot path (VBS is only the optional desktop double-click launcher).
 
-## Outbound proxy (Gemini / LLM)
+## Outbound network
 
-This plugin does **not** read WinINET, probe Clash, or set `HTTPS_PROXY` from the OS. Live Clash on/off after DSH is already running belongs to the user’s `NODE_OPTIONS` hook (e.g. `sysproxy-sync`, which re-reads system proxy on each `fetch`).
-
-The plugin only does portable env plumbing:
-
-1. Attach User/process `NODE_OPTIONS` to the long-lived host when the require path exists (so a live hook stays loaded for the whole session — including when Clash starts dead and comes back later).
-2. Strip static `HTTP(S)_PROXY` on the **host** so a pinned port cannot override the hook.
-3. Strip `NODE_OPTIONS` on **one-shot** update CLIs so `tsx` / `pnpm` cannot hang; leave any parent `HTTPS_PROXY` alone.
-
-Never drop the host hook because a local proxy port was unreachable at boot — that would freeze outbound mode until restart.
+This plugin does not read, strip, or set proxy variables or preloads. The environment of the process that starts it is copied onto the supervisor and the host. Following a system proxy (including turning it on after DSH is already up) is a separate program, not this package.
 
 ## Update means every plugin, after DSH is down
 
@@ -48,7 +40,7 @@ Never drop the host hook because a local proxy port was unreachable at boot — 
 <same node + execArgv> plugin --profile web update --latest
 ```
 
-from the captured launch. That is `dsh plugin --profile web update --latest`. It runs in a **separate** CLI process after the web host has exited, with `NODE_OPTIONS` stripped so a persistent `--require` hook cannot hang the one-shot.
+from the captured launch. That is `dsh plugin --profile web update --latest`. It runs in a **separate** CLI process after the web host has exited. This plugin does not rewrite that process's environment.
 
 There is no `git pull` of the harness checkout and no overlay dance. Those belong to a source tree, not to an installed plugin.
 

@@ -170,119 +170,18 @@ function spawnDetached(file, args, options = {}) {
   return child
 }
 
-const PROXY_ENV_NAMES = [
-  'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY',
-  'http_proxy', 'https_proxy', 'all_proxy',
-]
-
-function stripProxyEnv(env) {
-  for (const name of PROXY_ENV_NAMES) delete env[name]
-}
-
-function readWindowsRegValue(key, valueName) {
-  // Built-in `reg` only — env inheritance when the parent process was started
-  // without User-level variables (Cursor / Task Scheduler). Not used for
-  // proxy / WinINET / Clash state; live routing belongs to NODE_OPTIONS hooks.
-  const result = spawnSync('reg', ['query', key, '/v', valueName], {
-    encoding: 'utf8',
-    windowsHide: true,
-  })
-  if (result.status !== 0 || typeof result.stdout !== 'string') return undefined
-  const match = new RegExp(
-    `^\\s+${valueName}\\s+REG_(?:SZ|EXPAND_SZ|DWORD)\\s+(.+)$`,
-    'im',
-  ).exec(result.stdout)
-  if (match === null) return undefined
-  return match[1].trim()
-}
-
-function readPersistentEnv(name) {
-  const fromProcess = process.env[name]
-  if (typeof fromProcess === 'string' && fromProcess.trim().length > 0) return fromProcess
-  if (process.platform !== 'win32') return undefined
-  return readWindowsRegValue('HKCU\\Environment', name)
-    || readWindowsRegValue(
-      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
-      name,
-    )
-}
-
-function nodeOptionsRequiresPresent(nodeOptions) {
-  if (typeof nodeOptions !== 'string' || nodeOptions.trim().length === 0) return false
-  const requires = [...nodeOptions.matchAll(/(?:--require|-r)\s+(\S+)/g)].map(m => m[1])
-  if (requires.length === 0) return true
-  return requires.every(file => existsSync(file))
-}
-
-/**
- * Outbound env for spawned Node processes — OS-agnostic.
- *
- * This plugin does not read system proxy settings and does not probe Clash.
- * Live on/off after DSH is up is the job of whatever `NODE_OPTIONS` hook the
- * user installed (e.g. sysproxy-sync re-reads WinINET on each fetch). We only:
- *
- * - attach User/process `NODE_OPTIONS` to the long-lived host
- * - strip static HTTP(S)_PROXY on the host so a hook is not pinned to one port
- * - strip `NODE_OPTIONS` on one-shot CLIs so tsx/pnpm cannot hang
- */
-function prepareOutboundEnv(baseEnv, mode) {
-  const env = { ...baseEnv }
-  env.NO_PROXY = env.NO_PROXY
-    ? `${env.NO_PROXY},127.0.0.1,localhost`
-    : '127.0.0.1,localhost'
-
-  const nodeOptions = (typeof env.NODE_OPTIONS === 'string' && env.NODE_OPTIONS.trim())
-    ? env.NODE_OPTIONS.trim()
-    : readPersistentEnv('NODE_OPTIONS')?.trim()
-
-  if (mode === 'oneshot') {
-    delete env.NODE_OPTIONS
-    return { env, note: 'one-shot: NODE_OPTIONS stripped (parent proxy env unchanged)' }
-  }
-
-  stripProxyEnv(env)
-  if (nodeOptions && nodeOptionsRequiresPresent(nodeOptions)) {
-    env.NODE_OPTIONS = nodeOptions
-    return { env, note: 'host: NODE_OPTIONS attached (live proxy follows the hook, if any)' }
-  }
-  if (nodeOptions) {
-    delete env.NODE_OPTIONS
-    return { env, note: 'host: NODE_OPTIONS require missing on disk; outbound direct' }
-  }
-  delete env.NODE_OPTIONS
-  return { env, note: 'host: no NODE_OPTIONS; outbound direct' }
-}
-
 function envForHost(layout, extra = {}) {
-  const base = { ...process.env, ...extra }
+  // Parent environment is copied, not interpreted. Proxy variables, preloads,
+  // and system-proxy state belong to whatever started this process.
+  const env = { ...process.env, ...extra }
   if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
-    base.DSH_HOME = layout.dshHome
+    env.DSH_HOME = layout.dshHome.trim()
   }
-  return prepareOutboundEnv(base, 'host').env
-}
-
-async function envForHostAsync(layout, extra = {}) {
-  const base = { ...process.env, ...extra }
-  if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
-    base.DSH_HOME = layout.dshHome
-  }
-  return prepareOutboundEnv(base, 'host')
+  return env
 }
 
 function envForOneShot(layout) {
-  const base = { ...process.env }
-  if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
-    base.DSH_HOME = layout.dshHome
-  }
-  return prepareOutboundEnv(base, 'oneshot').env
-}
-
-async function envForOneShotAsync(layout) {
-  const base = { ...process.env }
-  if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
-    base.DSH_HOME = layout.dshHome
-  }
-  return prepareOutboundEnv(base, 'oneshot')
+  return envForHost(layout)
 }
 
 function lookOnPath(name, env = process.env) {
@@ -590,10 +489,9 @@ function mergeLayout(paths, captured) {
 
 async function startHostProcess(paths, layout) {
   ensureStateDir(paths)
-  const { env, note } = await envForHostAsync(layout, {
+  const env = envForHost(layout, {
     DSH_REBOOTER_SUPERVISOR: String(process.pid),
   })
-  logSupervisor(paths, note)
   const out = openSync(paths.outLog, 'w')
   const err = openSync(paths.errLog, 'w')
   try {
@@ -604,6 +502,9 @@ async function startHostProcess(paths, layout) {
       stdio: ['ignore', out, err],
     })
     if (!child.pid) throw new Error('failed to spawn the DSH host')
+    // Without unref(), a released supervisor keeps a handle on the living host
+    // and never exits — a zombie parent that still looks like "cli.cjs supervisor".
+    child.unref()
     writePidFile(paths.nodePid, child.pid)
     writeLayout(paths, { ...layout, nodePid: child.pid, supervisorPid: process.pid })
     return child
@@ -661,8 +562,7 @@ async function updatePlugins(paths, layout) {
     ? undefined
     : [...execArgv, ...args]
   logSupervisor(paths, 'updating profile plugins')
-  const { env, note } = await envForOneShotAsync(layout)
-  logSupervisor(paths, note)
+  const env = envForOneShot(layout)
   let result
   if (argv !== undefined) {
     result = spawnSync(node, argv, {
@@ -692,8 +592,7 @@ async function ensureSupervisor(paths, layout, cliFile) {
   if (process.env.DSH_REBOOTER_DRY_RUN === '1') return true
   if (await supervisorAlive(layout)) return true
   const cli = cliFile || cliPathFromHost()
-  const { env, note } = await envForHostAsync(layout)
-  logSupervisor(paths, note)
+  const env = envForHost(layout)
   spawnDetached(process.execPath, [cli, 'supervisor'], {
     cwd: layout.cwd || process.cwd(),
     env,
@@ -757,8 +656,7 @@ async function adoptSupervisor(paths, layout, cliFile) {
   }
 
   const cli = cliFile || cliPathFromHost()
-  const { env, note } = await envForHostAsync(layout)
-  logSupervisor(paths, note)
+  const env = envForHost(layout)
   spawnDetached(process.execPath, [cli, 'supervisor'], {
     cwd: layout.cwd || process.cwd(),
     env,
@@ -970,9 +868,7 @@ export {
   ensureStateDir,
   ensureSupervisor,
   envForHost,
-  envForHostAsync,
   envForOneShot,
-  envForOneShotAsync,
   installDesktopLauncher,
   isWebListening,
   killPid,
@@ -986,11 +882,9 @@ export {
   openUrl,
   performAction,
   pidAlive,
-  prepareOutboundEnv,
   probeHttp,
   readLayout,
   readPidFile,
-  readPersistentEnv,
   readWebUrl,
   releaseSupervisor,
   requestHostAdoptSupervisor,

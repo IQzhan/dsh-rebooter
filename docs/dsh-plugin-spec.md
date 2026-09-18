@@ -162,7 +162,7 @@ Client 与 Host 的对话优先走：
 dsh plugin --profile web update --latest
 ```
 
-先关闭 DSH，再跑这条（profile 的 `node_modules` 正在被占用时 pnpm 会失败）。短生命周期的 CLI 调用要去掉 `NODE_OPTIONS` 里的持久 `--require` 钩子，以免一次性 `tsx`/`pnpm` 挂住。
+先关闭 DSH，再跑这条（profile 的 `node_modules` 正在被占用时 pnpm 会失败）。本插件不改写这次调用的环境变量；若有预加载钩子，钩子自己必须能让短进程正常退出。
 
 状态与日志放在 `$DSH_HOME/rebooter/`，不放在某次 checkout 的 `.dsh-local/`（那是源码树私货，安装后的插件看不到）。
 

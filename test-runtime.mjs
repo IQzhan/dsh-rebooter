@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  ensureStateDir, envForHostAsync, envForOneShot, installDesktopLauncher, isWebListening, killPid,
+  ensureStateDir, envForHost, envForOneShot, installDesktopLauncher, isWebListening, killPid,
   launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout, pidAlive,
   probeHttp, readLayout, readPidFile, requestStopFiles, resolveHome, sendControl,
   sleep, spawnProcess, startControlServer, statePaths, writePidFile,
@@ -45,21 +45,17 @@ try {
   check('stop writes the stopping file', existsSync(paths.stopping), true)
 
   const env = envForOneShot(layout)
-  check('one-shot CLI drops NODE_OPTIONS', Object.hasOwn(env, 'NODE_OPTIONS'), false)
-  check('one-shot CLI still has DSH_HOME', env.DSH_HOME, home)
+  check('one-shot still has DSH_HOME', env.DSH_HOME, home)
 
   const previousHttps = process.env.HTTPS_PROXY
   const previousNodeOptions = process.env.NODE_OPTIONS
   process.env.HTTPS_PROXY = 'http://127.0.0.1:9'
-  const hook = join(home, 'outbound-hook.cjs')
-  writeFileSync(hook, "'use strict'\n")
-  process.env.NODE_OPTIONS = `--require ${hook}`
-  const prepared = await envForHostAsync({ dshHome: home })
-  check('host strips static HTTPS_PROXY', prepared.env.HTTPS_PROXY, undefined)
-  check('host keeps NODE_OPTIONS when require exists', prepared.env.NODE_OPTIONS, `--require ${hook}`)
-  process.env.NODE_OPTIONS = `--require ${join(home, 'missing-hook.cjs')}`
-  const missing = await envForHostAsync({ dshHome: home })
-  check('host drops NODE_OPTIONS when require is missing', Object.hasOwn(missing.env, 'NODE_OPTIONS'), false)
+  process.env.NODE_OPTIONS = '--require missing-on-purpose.cjs'
+  const hostEnv = envForHost({ dshHome: home })
+  const oneShot = envForOneShot({ dshHome: home })
+  check('host does not rewrite HTTPS_PROXY', hostEnv.HTTPS_PROXY, 'http://127.0.0.1:9')
+  check('host does not rewrite NODE_OPTIONS', hostEnv.NODE_OPTIONS, '--require missing-on-purpose.cjs')
+  check('one-shot does not strip NODE_OPTIONS', oneShot.NODE_OPTIONS, '--require missing-on-purpose.cjs')
   if (previousHttps === undefined) delete process.env.HTTPS_PROXY
   else process.env.HTTPS_PROXY = previousHttps
   if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS

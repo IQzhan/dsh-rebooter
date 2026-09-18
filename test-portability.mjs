@@ -88,6 +88,8 @@ check('runtime never uses a Windows named mutex', /Mutex|Win32_Process|CreateMut
 const runtimeWithoutLauncher = runtime.replace(/function launcherBody\([\s\S]*?\n\}/, '')
 check('supervisor path does not use WScript', /wscript/i.test(runtimeWithoutLauncher), false)
 check('desktop launcher may use WScript for a windowless start', /WScript\.Shell/.test(runtime), true)
+check('runtime does not read or rewrite proxy environment',
+  /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
 
 const failed = results.filter(result => !result.ok)
 for (const result of results) {
