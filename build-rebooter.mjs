@@ -12,11 +12,12 @@
  * The same core+runtime is concatenated into Host and CLI so the process that
  * outlives DSH cannot drift from the process that records the launch.
  */
-import { mkdir, readFile, rm, symlink, writeFile, readlink } from 'node:fs/promises'
+import { mkdir, readFile, rm, symlink, writeFile, readlink, copyFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_NAME = 'dsh-rebooter'
@@ -26,6 +27,7 @@ const OUT_PACKAGE = join(here, 'package')
 
 const CORE = join(here, 'dsh-rebooter-core.js')
 const RUNTIME = join(here, 'dsh-rebooter-runtime.js')
+const PANEL = join(here, 'dsh-rebooter-panel.js')
 const HOST = join(here, 'dsh-rebooter.host.js')
 const CLIENT = join(here, 'dsh-rebooter.client.js')
 const CLI = join(here, 'dsh-rebooter-cli.js')
@@ -98,9 +100,10 @@ const banner = `/**
  * Assembled by build-rebooter.mjs. Edit the sources and re-run the build.
  */`
 
-const [coreSource, runtimeSource, hostSource, clientSource, cliSource] = await Promise.all([
+const [coreSource, runtimeSource, panelSource, hostSource, clientSource, cliSource] = await Promise.all([
   readFile(CORE, 'utf8'),
   readFile(RUNTIME, 'utf8'),
+  readFile(PANEL, 'utf8'),
   readFile(HOST, 'utf8'),
   readFile(CLIENT, 'utf8'),
   readFile(CLI, 'utf8'),
@@ -112,10 +115,25 @@ assertImportFree(cliSource, 'dsh-rebooter-cli.js')
 
 const coreBody = stripExportBlock(coreSource, 'dsh-rebooter-core.js').trim()
 const runtimeBody = rewriteNodeImports(dropCoreImport(stripExportBlock(runtimeSource, 'dsh-rebooter-runtime.js'))).trim()
+function dropRelativeImports(source) {
+  return source
+    .replace(/^import\s*\{[\s\S]*?\}\s*from\s+'\.\/dsh-rebooter-core\.js'\s*$/m, '')
+    .replace(/^import\s*\{[\s\S]*?\}\s*from\s+'\.\/dsh-rebooter-runtime\.js'\s*$/m, '')
+}
+
+/** Panel reuses runtime's fs/os/path bindings in the concatenated bundle. */
+function dropPanelSharedNodeImports(source) {
+  return source
+    .replace(/^import\s*\{[^}]+\}\s*from\s+'node:(fs|os|path)'\s*$/gm, '')
+}
+
+const panelBody = rewriteNodeImports(
+  dropPanelSharedNodeImports(dropRelativeImports(stripExportBlock(panelSource, 'dsh-rebooter-panel.js'))),
+).trim()
 const hostBody = stripExportBlock(hostSource, 'dsh-rebooter.host.js').trim()
 const cliBody = stripExportBlock(cliSource, 'dsh-rebooter-cli.js').trim()
 
-const shared = [banner, `'use strict'`, coreBody, runtimeBody].join('\n\n')
+const shared = [banner, `'use strict'`, coreBody, runtimeBody, panelBody].join('\n\n')
 
 const hostModule = [
   shared,
@@ -139,7 +157,7 @@ const cliModule = [
   '    process.exit(1)',
   '  })',
   '}',
-  'module.exports = { runCli, runSupervisor, performAction, printCliHelp }',
+  'module.exports = { runCli, runSupervisor, performAction, runPanel, startPanelServer, printCliHelp }',
 ].join('\n\n')
 
 const clientModule = [
@@ -170,6 +188,9 @@ const manifest = {
       external: ['react'],
     },
   },
+  dependencies: {
+    '@webviewjs/webview': '^0.4.5',
+  },
 }
 
 const bundlePatch = `# ${PLUGIN_NAME} bundle patch.
@@ -181,13 +202,41 @@ const bundlePatch = `# ${PLUGIN_NAME} bundle patch.
       name: ${PLUGIN_NAME}
 `
 
-await rm(OUT_PACKAGE, { recursive: true, force: true })
+await mkdir(OUT_PACKAGE, { recursive: true })
+await rm(join(OUT_PACKAGE, 'lib'), { recursive: true, force: true })
+await rm(join(OUT_PACKAGE, 'cordis.patch.yml'), { force: true })
 await mkdir(join(OUT_PACKAGE, 'lib'), { recursive: true })
+await mkdir(join(OUT_PACKAGE, 'panel'), { recursive: true })
 await writeFile(join(OUT_PACKAGE, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'cordis.patch.yml'), bundlePatch, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'index.cjs'), `${hostModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'client.cjs'), `${clientModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'cli.cjs'), `${cliModule}\n`, 'utf8')
+await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
+  'DSH Server panel entry files are written here by:',
+  '  node lib/cli.cjs desktop',
+  'or automatically when the Host plugin mounts.',
+  '',
+].join('\n'), 'utf8')
+
+const designedIcon = join(here, 'icons', 'dsh-server.ico')
+if (existsSync(designedIcon)) {
+  await copyFile(designedIcon, join(OUT_PACKAGE, 'panel', 'dsh-server.ico'))
+}
+
+const hostInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', '@webviewjs', 'webview'))
+if (!hostInstalled) {
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const installed = spawnSync(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    cwd: OUT_PACKAGE,
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  })
+  if (installed.status !== 0) {
+    console.error('build: window host was not installed; rerun the build online so the panel window can open')
+    process.exit(installed.status ?? 1)
+  }
+}
 
 const lines = source => source.split('\n').length
 console.log(`built ${join('package', 'lib', 'index.cjs')}  (${lines(hostModule)} lines)`)

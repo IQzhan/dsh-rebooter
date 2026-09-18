@@ -30,9 +30,10 @@ check('and the same inline code', tokens(en).sort(), tokens(zh).sort())
 check('the English file links to the Chinese one', /README\.zh\.md/.test(en.split('\n').slice(0, 6).join('\n')), true)
 check('the Chinese file links to the English one', /README\.md/.test(zh.split('\n').slice(0, 6).join('\n')), true)
 
-const KEYS = ['start', 'stop', 'restart', 'update-stop', 'update-restart', 'sidebar.footer.action']
+const KEYS = ['start', 'stop', 'restart', 'update', 'update-stop', 'update-restart', 'open', 'panel', 'sidebar.footer.action', 'DSH Server']
 check('every action and slot is documented in both languages',
   KEYS.filter(key => !en.includes(key) || !zh.includes(key)), [])
+check('status panel design is linked', [en.includes('docs/status-panel'), zh.includes('docs/status-panel')], [true, true])
 
 for (const command of [
   'node build-rebooter.mjs',

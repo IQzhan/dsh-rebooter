@@ -27,6 +27,14 @@ function mountRebooter(ctx) {
     logSupervisor(paths, `supervisor adopt failed: ${error instanceof Error ? error.message : error}`)
   })
 
+  // Best-effort: write the DSH Server panel entry next to the package + Desktop.
+  try {
+    const cli = cliPathFromHost()
+    installPanelEntry(layout.node || process.execPath, cli)
+  } catch (error) {
+    logSupervisor(paths, `panel entry install skipped: ${error instanceof Error ? error.message : error}`)
+  }
+
   const readBody = async (req) => {
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
@@ -74,6 +82,7 @@ function mountRebooter(ctx) {
           return
         }
         dispatchCli(action, ['--from-host'])
+        void ensurePanelVisible(paths, layout)
         send(200, { ok: true, action, dispatched: true })
         return
       }

@@ -10,5 +10,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@webviewjs/webview": "^0.4.5"
   }
 }

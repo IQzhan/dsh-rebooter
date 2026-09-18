@@ -14,8 +14,10 @@ const DEFAULT_PORT = 3080
 const DEFAULT_PROFILE = 'web'
 const LAYOUT_VERSION = 1
 const CONTROL_OFFSET = 10000
+const PANEL_OFFSET = 10001
 const MENU_ACTIONS = Object.freeze(['stop', 'restart', 'update-stop', 'update-restart'])
-const ALL_ACTIONS = Object.freeze(['start', ...MENU_ACTIONS])
+const EXTRA_ACTIONS = Object.freeze(['update', 'open'])
+const ALL_ACTIONS = Object.freeze(['start', ...MENU_ACTIONS, ...EXTRA_ACTIONS])
 const WEB_URL_RE = /dsh web:\s*(https?:\/\/[^\s\r\n]+)/g
 
 function controlPort(webPort) {
@@ -25,12 +27,59 @@ function controlPort(webPort) {
   return candidate <= 65535 ? candidate : Math.max(1, base - 1)
 }
 
+function panelPort(webPort) {
+  const port = Number(webPort)
+  const base = Number.isInteger(port) && port > 0 && port <= 65535 ? port : DEFAULT_PORT
+  const candidate = base + PANEL_OFFSET
+  return candidate <= 65535 ? candidate : Math.max(1, base - 2)
+}
+
 function isAction(value) {
   return ALL_ACTIONS.includes(value)
 }
 
 function isMenuAction(value) {
   return MENU_ACTIONS.includes(value)
+}
+
+/** Buttons shown on the status panel when no job is busy. */
+function availableActions(running) {
+  if (running === true) {
+    return Object.freeze(['stop', 'restart', 'update-stop', 'update-restart', 'open'])
+  }
+  return Object.freeze(['start', 'update', 'update-restart'])
+}
+
+function idleJob() {
+  return {
+    version: 1,
+    id: null,
+    action: null,
+    state: 'idle',
+    message: '',
+    startedAt: null,
+    finishedAt: null,
+    error: null,
+  }
+}
+
+function defaultPanelPrefs() {
+  return {
+    version: 1,
+    autoOpen: false,
+    openApp: null,
+  }
+}
+
+/** Whether a start-like action should open the UI (prefs + explicit flags). */
+function shouldOpenUi(action, options = {}, prefs = defaultPanelPrefs()) {
+  if (action === 'open') return true
+  if (options.open === true) return true
+  if (options.open === false) return false
+  if (action === 'start' || action === 'restart' || action === 'update-restart') {
+    return prefs.autoOpen === true
+  }
+  return false
 }
 
 function parseFlag(args, name, fallback) {
@@ -146,21 +195,28 @@ export {
   DEFAULT_HOST,
   DEFAULT_PORT,
   DEFAULT_PROFILE,
+  EXTRA_ACTIONS,
   LAYOUT_VERSION,
   MENU_ACTIONS,
+  PANEL_OFFSET,
   PLUGIN_NAME,
   STATE_DIR_NAME,
+  availableActions,
   backoffDelay,
   captureLaunch,
   canonicalUrl,
   controlPort,
+  defaultPanelPrefs,
+  idleJob,
   isAction,
   isMenuAction,
   isPidAlive,
+  panelPort,
   parseHost,
   parsePort,
   parseWebUrl,
   pluginUpdateArgs,
+  shouldOpenUi,
   shouldSkipStart,
   spawnArgv,
   webIndex,

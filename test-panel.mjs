@@ -1,0 +1,70 @@
+import { createServer } from 'node:http'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import {
+  beginJob, endJob, ensureStateDir, mergeLayout, readJob, statePaths, writePanelPrefs,
+} from './dsh-rebooter-runtime.js'
+import { buildSnapshot, panelPageHtml } from './dsh-rebooter-panel.js'
+import { availableActions } from './dsh-rebooter-core.js'
+import { cleanup, scratch } from './test-support.mjs'
+
+const results = []
+function check(label, actual, expected) {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected)
+  results.push({ label, ok, actual, expected })
+}
+
+const home = scratch('panel-')
+process.env.DSH_HOME = home
+
+try {
+  const paths = ensureStateDir(statePaths(home))
+  const layout = mergeLayout(paths, {
+    node: process.execPath,
+    args: ['web', '--port', '37901'],
+    execArgv: [],
+    cwd: home,
+    dshHome: home,
+    host: '127.0.0.1',
+    port: 37901,
+    nodePid: 0,
+  })
+
+  const html = panelPageHtml()
+  check('panel html is a full document', html.includes('<!DOCTYPE html>') && html.includes('DSH Server'), true)
+  check('panel html has a custom draggable frame', html.includes('id="titlebar"') && html.includes('id="btnMin"') && html.includes('id="btnClose"'), true)
+  check('binding a program does not use window.prompt', html.includes('id="bindPath"') && html.includes('id="btnBrowse"') && !html.includes('prompt('), true)
+
+  writePanelPrefs(paths, { autoOpen: false, openApp: null })
+  const idle = await buildSnapshot(paths, layout)
+  check('idle snapshot exposes stopped actions', idle.actions, availableActions(false))
+  check('idle snapshot is not busy', idle.job.state, 'idle')
+
+  beginJob(paths, 'start', 'starting')
+  const busy = await buildSnapshot(paths, layout)
+  check('busy snapshot hides actions', busy.actions, [])
+  endJob(paths, 'ok', 'done')
+
+  const fakeWeb = createServer((_req, res) => { res.writeHead(200); res.end('ok') })
+  await new Promise(resolve => fakeWeb.listen(37901, '127.0.0.1', resolve))
+  const runningSnap = await buildSnapshot(paths, layout)
+  check('running snapshot exposes running actions', runningSnap.actions, availableActions(true))
+  await new Promise((resolve, reject) => {
+    fakeWeb.close((error) => (error ? reject(error) : resolve()))
+  })
+
+  // HTTP serving is exercised via the built CLI in manual/desktop use; keep
+  // this suite free of libuv close races on Windows.
+  check('status-panel design doc exists', existsSync(join(process.cwd(), 'docs', 'status-panel.md')), true)
+  check('status-panel zh doc exists', existsSync(join(process.cwd(), 'docs', 'status-panel.zh.md')), true)
+  check('design mentions DSH Server', readFileSync(join(process.cwd(), 'docs', 'status-panel.md'), 'utf8').includes('DSH Server'), true)
+} finally {
+  cleanup(home)
+}
+
+const failed = results.filter(result => !result.ok)
+for (const result of results) {
+  console.log(`${result.ok ? 'PASS' : 'FAIL'}  ${result.label}${result.ok ? '' : `\n      expected ${JSON.stringify(result.expected)}\n      actual   ${JSON.stringify(result.actual)}`}`)
+}
+console.log(`\n${results.length - failed.length}/${results.length} passed`)
+process.exit(failed.length > 0 ? 1 : 0)

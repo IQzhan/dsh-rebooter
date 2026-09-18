@@ -2,10 +2,11 @@ import { createServer } from 'node:http'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  ensureStateDir, envForHost, envForOneShot, installDesktopLauncher, isWebListening, killPid,
-  launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout, pidAlive,
-  probeHttp, readLayout, readPidFile, requestStopFiles, resolveHome, sendControl,
-  sleep, spawnProcess, startControlServer, statePaths, writePidFile,
+  beginJob, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
+  killPid, launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout,
+  pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, requestStopFiles,
+  resolveHome, sendControl, sleep, spawnProcess, startControlServer, statePaths, writePanelPrefs,
+  writePidFile,
 } from './dsh-rebooter-runtime.js'
 import { cleanup, scratch } from './test-support.mjs'
 
@@ -78,12 +79,36 @@ try {
 
   const fakeDesktop = join(home, 'Desktop')
   ensureStateDir({ root: fakeDesktop })
-  const installed = installDesktopLauncher(process.execPath, join(home, 'cli.cjs'), fakeDesktop)
-  check('desktop writes five launchers', Array.isArray(installed) && installed.length, 5)
-  check('every launcher file exists', installed.every(path => existsSync(path)), true)
-  check('start launcher invokes start', readFileSync(installed.find(p => p.includes('DSH-start')), 'utf8').includes(' start'), true)
-  check('stop launcher invokes stop', readFileSync(installed.find(p => p.includes('DSH-stop')), 'utf8').includes(' stop'), true)
+  const panelDir = join(home, 'package-panel')
+  const installed = installPanelEntry(process.execPath, join(home, 'cli.cjs'), {
+    panelDir,
+    desktopDir: fakeDesktop,
+  })
+  check('desktop installer returns paths', Array.isArray(installed) && installed.length >= 1, true)
+  check('every installed path exists', installed.every(path => existsSync(path)), true)
+  check('package panel entry invokes panel',
+    readFileSync(installed.find(p => p.includes('DSH-Server')), 'utf8').includes(' panel'), true)
+  if (process.platform === 'win32') {
+    const vbs = readFileSync(installed.find(p => p.endsWith('.vbs')), 'utf8')
+    check('panel vbs hides the node console', /", 0, False/.test(vbs), true)
+    check('panel vbs locates cli from its own folder', vbs.includes('ScriptFullName') && vbs.includes('cli.cjs'), true)
+    check('panel vbs does not bake a drive path', /[A-Za-z]:\\/.test(vbs), false)
+    check('shortcut helper is not left on the desktop', existsSync(join(fakeDesktop, '_dsh-mkshortcut.vbs')), false)
+    check('panel icon is a real file', existsSync(join(panelDir, 'dsh-server.ico')), true)
+  }
+  check('legacy five-action launchers are not created',
+    !existsSync(join(fakeDesktop, 'DSH-start.vbs'))
+      && !existsSync(join(fakeDesktop, 'DSH-start.command'))
+      && !existsSync(join(fakeDesktop, 'DSH-start.desktop')), true)
   check('legacy single DSH launcher is removed', existsSync(join(fakeDesktop, 'DSH.vbs')) || existsSync(join(fakeDesktop, 'DSH.cmd')), false)
+
+  const prefs = writePanelPrefs(paths, { autoOpen: true, openApp: null })
+  check('panel prefs round-trip autoOpen', readPanelPrefs(paths).autoOpen, true)
+  check('panel prefs default openApp null', prefs.openApp, null)
+  beginJob(paths, 'start', 'starting')
+  check('beginJob marks busy', readJob(paths).state, 'busy')
+  endJob(paths, 'ok', 'done')
+  check('endJob marks ok', readJob(paths).state, 'ok')
 
   const control = startControlServer(async (request) => {
     if (request.op === 'ping') return { ok: true, pid: 7 }

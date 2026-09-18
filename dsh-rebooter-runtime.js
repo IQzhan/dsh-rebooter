@@ -11,15 +11,16 @@
 
 import {
   ALL_ACTIONS, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, LAYOUT_VERSION, STATE_DIR_NAME,
-  backoffDelay, captureLaunch, canonicalUrl, controlPort, isAction, isPidAlive,
-  parseWebUrl, pluginUpdateArgs, spawnArgv, withNoOpen,
+  availableActions, backoffDelay, captureLaunch, canonicalUrl, controlPort, defaultPanelPrefs,
+  idleJob, isAction, isPidAlive, panelPort, parseWebUrl, pluginUpdateArgs, shouldOpenUi,
+  spawnArgv, withNoOpen,
 } from './dsh-rebooter-core.js'
 import {
-  appendFileSync, chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync,
-  rmSync, writeFileSync,
+  appendFileSync, chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync,
+  readdirSync, rmSync, statSync, writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
@@ -42,6 +43,9 @@ function statePaths(home = resolveHome()) {
     errLog: join(root, 'web.err.log'),
     supervisorLog: join(root, 'supervisor.log'),
     url: join(root, 'web.url'),
+    job: join(root, 'job.json'),
+    jobLog: join(root, 'job.log'),
+    panelPrefs: join(root, 'panel.json'),
   }
 }
 
@@ -83,6 +87,117 @@ function writeLayout(paths, layout) {
   ensureStateDir(paths)
   writeJson(paths.layout, layout)
   return layout
+}
+
+function readPanelPrefs(paths) {
+  const stored = (() => {
+    const raw = readText(paths.panelPrefs)
+    if (raw === undefined) return {}
+    try {
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    } catch {
+      return {}
+    }
+  })()
+  const base = defaultPanelPrefs()
+  return {
+    version: base.version,
+    autoOpen: stored.autoOpen === true,
+    openApp: typeof stored.openApp === 'string' && stored.openApp.trim().length > 0
+      ? stored.openApp.trim()
+      : null,
+  }
+}
+
+function writePanelPrefs(paths, prefs) {
+  const base = defaultPanelPrefs()
+  const next = {
+    version: base.version,
+    autoOpen: prefs?.autoOpen === true,
+    openApp: typeof prefs?.openApp === 'string' && prefs.openApp.trim().length > 0
+      ? prefs.openApp.trim()
+      : null,
+  }
+  ensureStateDir(paths)
+  writeJson(paths.panelPrefs, next)
+  return next
+}
+
+function readJob(paths) {
+  const raw = readText(paths.job)
+  const base = idleJob()
+  if (raw === undefined) return base
+  try {
+    const stored = JSON.parse(raw)
+    if (stored === null || typeof stored !== 'object') return base
+    return {
+      ...base,
+      ...stored,
+      state: ['idle', 'busy', 'ok', 'error'].includes(stored.state) ? stored.state : 'idle',
+    }
+  } catch {
+    return base
+  }
+}
+
+function writeJob(paths, job) {
+  ensureStateDir(paths)
+  writeJson(paths.job, job)
+  return job
+}
+
+function appendJobLog(paths, line) {
+  ensureStateDir(paths)
+  const text = typeof line === 'string' ? line : String(line)
+  const prev = readText(paths.jobLog)
+  writeText(paths.jobLog, prev === undefined || prev.length === 0 ? `${text}\n` : `${prev}${text}\n`)
+}
+
+function beginJob(paths, action, message) {
+  const job = {
+    ...idleJob(),
+    id: `${Date.now()}`,
+    action,
+    state: 'busy',
+    message: typeof message === 'string' ? message : '',
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: null,
+  }
+  writeText(paths.jobLog, '')
+  writeJob(paths, job)
+  if (job.message) appendJobLog(paths, job.message)
+  return job
+}
+
+function endJob(paths, state, message, error) {
+  const prev = readJob(paths)
+  const job = {
+    ...prev,
+    state: state === 'ok' || state === 'error' || state === 'idle' ? state : 'idle',
+    message: typeof message === 'string' ? message : prev.message,
+    finishedAt: new Date().toISOString(),
+    error: error === undefined || error === null ? null : String(error),
+  }
+  writeJob(paths, job)
+  if (typeof message === 'string' && message.length > 0) appendJobLog(paths, message)
+  if (job.error) appendJobLog(paths, job.error)
+  return job
+}
+
+function openDshUi(paths, layout) {
+  const prefs = readPanelPrefs(paths)
+  const url = readWebUrl(paths, layout)
+  if (typeof url !== 'string' || url.length === 0) {
+    throw new Error('DSH URL is not available yet')
+  }
+  if (prefs.openApp) {
+    spawnDetached(prefs.openApp, [url])
+    return { ok: true, url, app: prefs.openApp }
+  }
+  openUrl(url)
+  return { ok: true, url }
 }
 
 function writePidFile(path, pid) {
@@ -158,13 +273,14 @@ function spawnProcess(file, args, options) {
 
 function spawnDetached(file, args, options = {}) {
   // One cross-platform shape: detach from the launcher, inherit no stdio, and
-  // on Windows ask for CREATE_NO_WINDOW (`windowsHide`). No cmd/VBS trampoline
-  // in the hot path — those allocate a console titled by `process.title`.
+  // on Windows ask for CREATE_NO_WINDOW (`windowsHide`) by default. Pass
+  // `windowsHide: false` for real UI processes (Edge/Chrome `--app=`).
   const child = spawn(file, args, spawnOptions({
     cwd: options.cwd,
     env: options.env,
     detached: true,
     stdio: 'ignore',
+    windowsHide: options.windowsHide !== false,
   }))
   child.unref()
   return child
@@ -290,7 +406,6 @@ function desktopDir() {
 
 function launcherNames() {
   if (process.platform === 'win32') {
-    // .vbs + Run(..., 0): desktop-only silent double-click on Windows.
     return { kind: 'vbs', ext: '.vbs' }
   }
   if (process.platform === 'darwin') {
@@ -299,12 +414,212 @@ function launcherNames() {
   return { kind: 'desktop', ext: '.desktop' }
 }
 
-function launcherFileName(action, ext = launcherNames().ext) {
-  return `DSH-${action}${ext}`
-}
-
 function quoteForVbs(value) {
   return String(value).replace(/"/g, '""')
+}
+
+function panelLauncherBody(kind) {
+  // The file lives in <package>/panel/. It finds cli.cjs from its own location
+  // so a moved or reinstalled package does not keep another machine's paths.
+  if (kind === 'vbs') {
+    return [
+      'Set fso = CreateObject("Scripting.FileSystemObject")',
+      'Set sh = CreateObject("WScript.Shell")',
+      'panelDir = fso.GetParentFolderName(WScript.ScriptFullName)',
+      'pkg = fso.GetParentFolderName(panelDir)',
+      'cli = fso.BuildPath(fso.BuildPath(pkg, "lib"), "cli.cjs")',
+      'sh.CurrentDirectory = pkg',
+      'sh.Run "node """ & cli & """ panel", 0, False',
+      '',
+    ].join('\r\n')
+  }
+  const script = [
+    '#!/bin/sh',
+    'here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)',
+    'pkg=$(CDPATH= cd -- "$here/.." && pwd)',
+    'cd "$pkg" || exit 1',
+    'exec node ./lib/cli.cjs panel',
+    '',
+  ].join('\n')
+  if (kind === 'desktop') return script
+  return script
+}
+
+function packagePanelDir(cli = cliPathFromHost()) {
+  return join(dirname(cli), '..', 'panel')
+}
+
+function writeWindowsShortcut(lnkPath, target, args, options = {}) {
+  // Helper stays beside the package entry, never on the Desktop.
+  const dir = options.helperDir || dirname(target)
+  mkdirSync(dir, { recursive: true })
+  mkdirSync(dirname(lnkPath), { recursive: true })
+  const helper = join(dir, '_dsh-mkshortcut.vbs')
+  const q = (value) => `"${quoteForVbs(value)}"`
+  const workDir = options.workDir || dirname(target)
+  const iconPath = options.iconPath
+  const windowStyle = Number.isInteger(options.windowStyle) ? options.windowStyle : 7
+  const lines = [
+    'Set sh = CreateObject("WScript.Shell")',
+    `Set s = sh.CreateShortcut(${q(lnkPath)})`,
+    `s.TargetPath = ${q(target)}`,
+    `s.Arguments = ${q(args)}`,
+    `s.WorkingDirectory = ${q(workDir)}`,
+    `s.WindowStyle = ${windowStyle}`,
+    `s.Description = ${q('DSH Server')}`,
+  ]
+  if (iconPath) lines.push(`s.IconLocation = ${q(iconPath)}`)
+  lines.push('s.Save')
+  writeText(helper, `${lines.join('\r\n')}\r\n`)
+  try {
+    spawnSync('cscript.exe', ['//nologo', helper], { windowsHide: true, encoding: 'utf8' })
+  } finally {
+    removeFile(helper)
+  }
+}
+
+function removeShortcutHelpers(dir) {
+  if (typeof dir !== 'string' || dir.length === 0 || !existsSync(dir)) return
+  let names = []
+  try { names = readdirSync(dir) } catch { return }
+  for (const name of names) {
+    if (/^_dsh-mkshortcut.*\.vbs$/i.test(name)) removeFile(join(dir, name))
+  }
+}
+
+/** Shortcut icon. A .vbs has no icon resource, so the shortcut must not point at it. */
+function writePanelIcon(dir) {
+  const dest = join(dir, 'dsh-server.ico')
+  const designed = join(dirname(dirname(dir)), 'icons', 'dsh-server.ico')
+  if (existsSync(designed)) {
+    try {
+      copyFileSync(designed, dest)
+      return dest
+    } catch { /* fall back below */ }
+  }
+  try {
+    if (existsSync(dest) && statSync(dest).size > 8000) return dest
+  } catch { /* regenerate the tiny fallback */ }
+  const size = 32
+  const xor = Buffer.alloc(size * size * 4)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const offset = ((size - 1 - y) * size + x) * 4
+      const dx = x - 15.5
+      const dy = y - 15.5
+      const r2 = dx * dx + dy * dy
+      if (r2 > 14 * 14) continue
+      if (r2 <= 5.5 * 5.5) {
+        xor[offset] = 0xf7
+        xor[offset + 1] = 0xab
+        xor[offset + 2] = 0x4d
+      } else {
+        xor[offset] = 0x2b
+        xor[offset + 1] = 0x26
+        xor[offset + 2] = 0x25
+      }
+      xor[offset + 3] = 255
+    }
+  }
+  const header = Buffer.alloc(62)
+  header.writeUInt16LE(1, 2)
+  header.writeUInt16LE(1, 4)
+  header[6] = size
+  header[7] = size
+  header.writeUInt16LE(1, 10)
+  header.writeUInt16LE(32, 12)
+  const andRow = 4
+  const and = Buffer.alloc(andRow * size)
+  const imageBytes = 40 + xor.length + and.length
+  header.writeUInt32LE(imageBytes, 14)
+  header.writeUInt32LE(22, 18)
+  header.writeUInt32LE(40, 22)
+  header.writeInt32LE(size, 26)
+  header.writeInt32LE(size * 2, 30)
+  header.writeUInt16LE(1, 34)
+  header.writeUInt16LE(32, 36)
+  header.writeUInt32LE(xor.length, 42)
+  const path = join(dir, 'dsh-server.ico')
+  writeFileSync(path, Buffer.concat([header, xor, and]))
+  return path
+}
+
+/** Write the single DSH Server entry under package/panel and a Desktop shortcut. */
+function installPanelEntry(node, cli, options = {}) {
+  const panelDir = options.panelDir || packagePanelDir(cli)
+  mkdirSync(panelDir, { recursive: true })
+  const { kind, ext } = launcherNames()
+  const entryExt = kind === 'desktop' ? '.sh' : ext
+  const entryName = `DSH-Server${entryExt}`
+  const entryPath = join(panelDir, entryName)
+  writeText(entryPath, panelLauncherBody(kind))
+  if (kind === 'command' || kind === 'desktop') {
+    try { chmodSync(entryPath, 0o755) } catch { /* best-effort */ }
+  }
+
+  const installed = [entryPath]
+  const iconPath = writePanelIcon(panelDir)
+  const desk = options.desktopDir || desktopDir()
+  if (desk !== undefined) {
+    removeShortcutHelpers(desk)
+    mkdirSync(desk, { recursive: true })
+    if (process.platform === 'win32') {
+      const lnk = join(desk, 'DSH Server.lnk')
+      const systemRoot = process.env.SystemRoot
+      if (typeof systemRoot === 'string' && systemRoot.length > 0) {
+        const scriptHost = join(systemRoot, 'System32', 'wscript.exe')
+        writeWindowsShortcut(lnk, scriptHost, `//B //nologo "${entryPath}"`, {
+          helperDir: panelDir,
+          workDir: dirname(panelDir),
+          windowStyle: 7,
+          iconPath,
+        })
+        installed.push(lnk)
+      }
+    } else if (process.platform === 'darwin') {
+      const dest = join(desk, 'DSH Server.command')
+      writeText(dest, `#!/bin/sh\nexec /bin/sh ${JSON.stringify(entryPath)}\n`)
+      try { chmodSync(dest, 0o755) } catch { /* ignore */ }
+      installed.push(dest)
+    } else {
+      const dest = join(desk, 'DSH Server.desktop')
+      const pkg = dirname(panelDir)
+      writeText(dest, [
+        '[Desktop Entry]',
+        'Type=Application',
+        'Name=DSH Server',
+        `Exec=${JSON.stringify(entryPath)}`,
+        `Path=${pkg}`,
+        'Terminal=false',
+        `Icon=${iconPath}`,
+        '',
+      ].join('\n'))
+      try { chmodSync(dest, 0o755) } catch { /* ignore */ }
+      installed.push(dest)
+    }
+  }
+
+  // Remove legacy five-action desktop launchers and old single files.
+  if (desk !== undefined) {
+    for (const action of ['start', 'stop', 'restart', 'update-stop', 'update-restart']) {
+      for (const legacyExt of ['.vbs', '.command', '.desktop', '.cmd']) {
+        removeFile(join(desk, `DSH-${action}${legacyExt}`))
+      }
+    }
+    for (const legacy of ['DSH.vbs', 'DSH.cmd', 'DSH.command', 'DSH.desktop']) {
+      removeFile(join(desk, legacy))
+    }
+  }
+  return installed
+}
+
+/** @deprecated use installPanelEntry */
+function installDesktopLauncher(node, cli, dir = desktopDir()) {
+  return installPanelEntry(node, cli, { desktopDir: dir })
+}
+
+function launcherFileName(action, ext = launcherNames().ext) {
+  return `DSH-${action}${ext}`
 }
 
 function launcherTitle(action) {
@@ -314,15 +629,13 @@ function launcherTitle(action) {
     restart: 'DSH Restart',
     'update-stop': 'DSH Update Stop',
     'update-restart': 'DSH Update Restart',
+    panel: 'DSH Server',
   })[action] || `DSH ${action}`
 }
 
 function launcherBody(kind, node, cli, action = 'start') {
-  // Desktop start opens the browser (no --no-open) so a double-click is visible.
+  if (action === 'panel') return panelLauncherBody(kind)
   if (kind === 'vbs') {
-    // One Run string: `"node" "cli" action`. Escape " as "" for VBScript.
-    // Never concatenate `"" """` between paths — that ends the string early and
-    // turns `update-restart` into a minus expression (编译错误 800A0401).
     const command = `"${node}" "${cli}" ${action}`
     return [
       'Set sh = CreateObject("WScript.Shell")',
@@ -342,26 +655,6 @@ function launcherBody(kind, node, cli, action = 'start') {
     'Categories=Utility;',
     '',
   ].join('\n')
-}
-
-function installDesktopLauncher(node, cli, dir = desktopDir()) {
-  if (dir === undefined) return undefined
-  mkdirSync(dir, { recursive: true })
-  const { kind, ext } = launcherNames()
-  const installed = []
-  for (const action of ALL_ACTIONS) {
-    const path = join(dir, launcherFileName(action, ext))
-    writeText(path, launcherBody(kind, node, cli, action))
-    if (kind === 'command' || kind === 'desktop') {
-      try { chmodSync(path, 0o755) } catch { /* best-effort executable bit */ }
-    }
-    installed.push(path)
-  }
-  // Remove the old single-file launchers if present.
-  for (const legacy of ['DSH.vbs', 'DSH.cmd', 'DSH.command', 'DSH.desktop']) {
-    removeFile(join(dir, legacy))
-  }
-  return installed
 }
 
 function sendControl(port, payload, timeoutMs = 2000) {
@@ -562,6 +855,7 @@ async function updatePlugins(paths, layout) {
     ? undefined
     : [...execArgv, ...args]
   logSupervisor(paths, 'updating profile plugins')
+  appendJobLog(paths, 'updating profile plugins…')
   const env = envForOneShot(layout)
   let result
   if (argv !== undefined) {
@@ -582,7 +876,11 @@ async function updatePlugins(paths, layout) {
     })
   }
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
-  if (output) logSupervisor(paths, output.trim().split('\n').slice(-20).join('\n'))
+  if (output) {
+    const tail = output.trim().split('\n').slice(-40)
+    logSupervisor(paths, tail.join('\n'))
+    for (const line of tail) appendJobLog(paths, line)
+  }
   if (result.status !== 0) {
     throw new Error(`plugin update failed (exit ${result.status ?? '?'})`)
   }
@@ -702,39 +1000,77 @@ async function performAction(action, options = {}) {
   const paths = ensureStateDir(statePaths(options.home))
   const layout = resolveLayout(paths, options)
   const fromHost = options.fromHost === true
+  const prefs = readPanelPrefs(paths)
+  const open = shouldOpenUi(action, options, prefs)
+  const trackJob = options.trackJob !== false
+  const alreadyBusy = readJob(paths).state === 'busy'
+
+  if (trackJob && !alreadyBusy) {
+    beginJob(paths, action, `running ${action}`)
+  }
   if (fromHost && action !== 'start') await sleep(400)
 
-  if (action === 'stop' || action === 'restart' || action === 'update-stop' || action === 'update-restart') {
-    await requestSupervisorStop(paths, layout)
-  }
-
-  if (action === 'update-stop' || action === 'update-restart') {
-    await updatePlugins(paths, readLayout(paths) ?? layout)
-  }
-
-  if (action === 'start' || action === 'restart' || action === 'update-restart') {
-    removeFile(paths.stopping)
-    const listening = await isWebListening(layout)
-    // When the web host is already up, ask IT to own the supervisor so the
-    // short-lived CLI process is not the parent (launcher Job Object).
-    if (listening && action === 'start') {
-      let ok = await requestHostAdoptSupervisor(layout)
-      if (!ok) ok = await ensureSupervisor(paths, layout, options.cliFile)
-      if (!ok) throw new Error('supervisor did not start')
-      const url = await waitWebReady(paths, layout, Math.min(options.timeoutMs ?? 120000, 15000))
-        ?? readWebUrl(paths, layout)
-      if (options.open !== false) openUrl(url)
-      return { ok: true, action, url, skipped: true }
+  try {
+    if (action === 'open') {
+      const result = openDshUi(paths, layout)
+      if (trackJob) endJob(paths, 'ok', 'UI opened')
+      return { ok: true, action, ...result }
     }
-    const ok = await ensureSupervisor(paths, layout, options.cliFile)
-    if (!ok) throw new Error('supervisor did not start')
-    const url = await waitWebReady(paths, layout, options.timeoutMs ?? 120000)
-    if (url === undefined) throw new Error('DSH did not become ready')
-    if (options.open !== false && action !== 'supervisor') openUrl(url)
-    return { ok: true, action, url }
-  }
 
-  return { ok: true, action }
+    if (action === 'update') {
+      await updatePlugins(paths, readLayout(paths) ?? layout)
+      if (trackJob) endJob(paths, 'ok', 'update finished')
+      return { ok: true, action }
+    }
+
+    if (action === 'stop' || action === 'restart' || action === 'update-stop' || action === 'update-restart') {
+      appendJobLog(paths, 'stopping DSH…')
+      await requestSupervisorStop(paths, layout)
+    }
+
+    if (action === 'update-stop' || action === 'update-restart') {
+      await updatePlugins(paths, readLayout(paths) ?? layout)
+    }
+
+    if (action === 'start' || action === 'restart' || action === 'update-restart') {
+      removeFile(paths.stopping)
+      const listening = await isWebListening(layout)
+      if (listening && action === 'start') {
+        let ok = await requestHostAdoptSupervisor(layout)
+        if (!ok) ok = await ensureSupervisor(paths, layout, options.cliFile)
+        if (!ok) throw new Error('supervisor did not start')
+        const url = await waitWebReady(paths, layout, Math.min(options.timeoutMs ?? 120000, 15000))
+          ?? readWebUrl(paths, layout)
+        if (open) {
+          const prefsNow = readPanelPrefs(paths)
+          if (prefsNow.openApp) spawnDetached(prefsNow.openApp, [url])
+          else openUrl(url)
+        }
+        if (trackJob) endJob(paths, 'ok', 'already running')
+        return { ok: true, action, url, skipped: true }
+      }
+      appendJobLog(paths, 'starting host…')
+      const ok = await ensureSupervisor(paths, layout, options.cliFile)
+      if (!ok) throw new Error('supervisor did not start')
+      const url = await waitWebReady(paths, layout, options.timeoutMs ?? 120000)
+      if (url === undefined) throw new Error('DSH did not become ready')
+      if (open) {
+        const prefsNow = readPanelPrefs(paths)
+        if (prefsNow.openApp) spawnDetached(prefsNow.openApp, [url])
+        else openUrl(url)
+      }
+      if (trackJob) endJob(paths, 'ok', 'ready')
+      return { ok: true, action, url }
+    }
+
+    if (trackJob) endJob(paths, 'ok', 'done')
+    return { ok: true, action }
+  } catch (error) {
+    if (trackJob) {
+      endJob(paths, 'error', 'failed', error instanceof Error ? error.message : String(error))
+    }
+    throw error
+  }
 }
 
 async function runSupervisor(options = {}) {
@@ -862,14 +1198,18 @@ async function runSupervisor(options = {}) {
 
 export {
   adoptSupervisor,
+  appendJobLog,
+  beginJob,
   cliPathFromHost,
   desktopDir,
   dispatchCli,
+  endJob,
   ensureStateDir,
   ensureSupervisor,
   envForHost,
   envForOneShot,
   installDesktopLauncher,
+  installPanelEntry,
   isWebListening,
   killPid,
   launcherBody,
@@ -879,12 +1219,17 @@ export {
   logSupervisor,
   lookOnPath,
   mergeLayout,
+  openDshUi,
   openUrl,
+  packagePanelDir,
   performAction,
   pidAlive,
   probeHttp,
+  readJob,
   readLayout,
+  readPanelPrefs,
   readPidFile,
+  readText,
   readWebUrl,
   releaseSupervisor,
   requestHostAdoptSupervisor,
@@ -903,6 +1248,8 @@ export {
   updatePlugins,
   waitPidGone,
   waitWebReady,
+  writeJob,
   writeLayout,
+  writePanelPrefs,
   writePidFile,
 }

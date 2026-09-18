@@ -10,10 +10,10 @@ function check(label, actual, expected) {
 
 function shippedFiles() {
   const named = [
-    'dsh-rebooter-core.js', 'dsh-rebooter-runtime.js', 'dsh-rebooter.host.js',
-    'dsh-rebooter.client.js', 'dsh-rebooter-cli.js', 'build-rebooter.mjs',
-    'run-tests.mjs', 'package.json', 'README.md', 'README.zh.md', 'LICENSE',
-    'test-support.mjs',
+    'dsh-rebooter-core.js', 'dsh-rebooter-runtime.js', 'dsh-rebooter-panel.js',
+    'dsh-rebooter.host.js', 'dsh-rebooter.client.js', 'dsh-rebooter-cli.js',
+    'build-rebooter.mjs', 'run-tests.mjs', 'package.json', 'README.md', 'README.zh.md',
+    'LICENSE', 'test-support.mjs',
   ]
   const missing = named.filter(name => !existsSync(join(ROOT, name)))
   check('every named file is actually there', missing, [])
@@ -83,11 +83,15 @@ const runtime = readFileSync(join(ROOT, 'dsh-rebooter-runtime.js'), 'utf8')
 check('runtime never shells out to powershell / schtasks / taskkill',
   /powershell|pwsh|schtasks|taskkill/i.test(runtime), false)
 check('runtime never uses a Windows named mutex', /Mutex|Win32_Process|CreateMutex/i.test(runtime), false)
-// WScript appears only in the desktop launcher body (silent double-click on
- // Windows). The supervisor hot path must stay free of it.
-const runtimeWithoutLauncher = runtime.replace(/function launcherBody\([\s\S]*?\n\}/, '')
-check('supervisor path does not use WScript', /wscript/i.test(runtimeWithoutLauncher), false)
+// WScript may appear only inside launcher/shortcut *string bodies* (desktop entry).
+const wscriptCodeLines = runtime.split('\n')
+  .map(line => line.trim())
+  .filter(line => /wscript/i.test(line))
+  .filter(line => !line.startsWith('//') && !line.startsWith('*'))
+  .filter(line => !/(['"`]).*[Ww][Ss]cript|CreateObject\("WScript/.test(line))
+check('supervisor path does not use WScript', wscriptCodeLines, [])
 check('desktop launcher may use WScript for a windowless start', /WScript\.Shell/.test(runtime), true)
+check('desktop shortcut targets wscript host string', /wscript\.exe/.test(runtime), true)
 check('runtime does not read or rewrite proxy environment',
   /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
 

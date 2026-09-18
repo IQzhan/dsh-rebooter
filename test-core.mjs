@@ -1,8 +1,8 @@
 import {
   ALL_ACTIONS, MENU_ACTIONS, PLUGIN_NAME, STATE_DIR_NAME,
-  backoffDelay, captureLaunch, canonicalUrl, controlPort, isAction, isMenuAction,
-  isPidAlive, parseHost, parsePort, parseWebUrl, pluginUpdateArgs, shouldSkipStart,
-  spawnArgv, withNoOpen,
+  availableActions, backoffDelay, captureLaunch, canonicalUrl, controlPort, isAction, isMenuAction,
+  isPidAlive, panelPort, parseHost, parsePort, parseWebUrl, pluginUpdateArgs, shouldOpenUi,
+  shouldSkipStart, spawnArgv, withNoOpen,
 } from './dsh-rebooter-core.js'
 
 const results = []
@@ -15,11 +15,22 @@ check('plugin name', PLUGIN_NAME, 'dsh-rebooter')
 check('state dir is under DSH home, not a checkout folder', STATE_DIR_NAME, 'rebooter')
 check('start is an action', isAction('start'), true)
 check('start is not a menu action', isMenuAction('start'), false)
+check('update is an action', isAction('update'), true)
+check('open is an action', isAction('open'), true)
+check('update is not a menu action', isMenuAction('update'), false)
 check('the four menu actions', MENU_ACTIONS, ['stop', 'restart', 'update-stop', 'update-restart'])
-check('all five actions', ALL_ACTIONS, ['start', 'stop', 'restart', 'update-stop', 'update-restart'])
+check('all actions include start, menu, update, open', ALL_ACTIONS,
+  ['start', 'stop', 'restart', 'update-stop', 'update-restart', 'update', 'open'])
 check('unknown action', isAction('shutdown'), false)
 
 check('control port is a separate bind from the web port', controlPort(3080), 13080)
+check('panel port sits above the control port', panelPort(3080), 13081)
+check('available actions when stopped', availableActions(false), ['start', 'update', 'update-restart'])
+check('available actions when running', availableActions(true),
+  ['stop', 'restart', 'update-stop', 'update-restart', 'open'])
+check('shouldOpenUi defaults off', shouldOpenUi('start', {}, { autoOpen: false }), false)
+check('shouldOpenUi respects autoOpen', shouldOpenUi('start', {}, { autoOpen: true }), true)
+check('shouldOpenUi respects --open', shouldOpenUi('start', { open: true }, { autoOpen: false }), true)
 check('control port stays inside the TCP range', controlPort(60000) <= 65535, true)
 check('bogus web port falls back', controlPort('nope'), 13080)
 

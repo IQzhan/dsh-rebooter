@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 const SUITES = [
   ['test-core.mjs', '策略核心：动作、启动参数、单例端口'],
   ['test-runtime.mjs', '运行时：状态目录、控制面、进程、桌面启动器'],
+  ['test-panel.mjs', '状态面板：快照、HTTP、文档'],
   ['test-host.mjs', '适配层：路由、layout、apply 返回值'],
   ['test-package.mjs', '包：两个真实加载器'],
   ['test-client.mjs', '菜单：双语、slot、不在顶层读 React'],

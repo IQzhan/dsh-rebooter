@@ -2,17 +2,21 @@
 
 This document records **why** `dsh-rebooter` is shaped the way it is. The installable-package rules themselves live in [`dsh-plugin-spec.md`](dsh-plugin-spec.md).
 
-## One menu, five actions
+## One menu, panel actions
 
-| Action | From the in-app menu | From the desktop / CLI |
+| Action | From the in-app menu | From the panel / CLI |
 | --- | --- | --- |
 | `start` | no (DSH is already running) | yes |
 | `stop` | yes | yes |
 | `restart` | yes | yes |
+| `update` | no | yes (when stopped) |
 | `update-stop` | yes | yes |
 | `update-restart` | yes | yes |
+| `open` | no | yes (when running) |
 
 The four in-app items sit on **one** `sidebar.footer.action` control, parked to the **left** of Settings in the wide sidebar: CSS flips the official column foot into a row, and the component moves only its own node into the settings trigger row. The rail stays stacked: two 36px circles do not fit in 56px.
+
+The desktop entry is a single **DSH Server** status panel (see [`status-panel.md`](status-panel.md)). Start does **not** open the browser unless `panel.json` has `autoOpen: true` or the CLI passes `--open`.
 
 ## Persistence without Windows
 
@@ -50,4 +54,4 @@ There is no `git pull` of the harness checkout and no overlay dance. Those belon
 node package/lib/cli.cjs desktop
 ```
 
-One command writes **five** double-click launchers onto the user's Desktop. The suffix follows the OS (`.vbs` silent on Windows, `.command` on macOS, `.desktop` on Linux): `DSH-start`, `DSH-stop`, `DSH-restart`, `DSH-update-stop`, `DSH-update-restart`. `DSH-start` runs `start` (opens the browser); it does not use `--no-open`. Paths are machine-local; the plugin source never embeds a Desktop path.
+Writes the OS-specific **DSH Server** entry under `package/panel/` and a Desktop shortcut named **DSH Server**. Double-click opens the status panel (`dsh-rebooter panel`). Paths are machine-local; the plugin source never embeds a Desktop path.
