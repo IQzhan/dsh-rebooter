@@ -180,8 +180,9 @@ function stripProxyEnv(env) {
 }
 
 function readWindowsRegValue(key, valueName) {
-  // Built-in `reg` only — no scripting host. Used to pick up User NODE_OPTIONS
-  // and WinINET when the parent process (Cursor / Task) was started without them.
+  // Built-in `reg` only — env inheritance when the parent process was started
+  // without User-level variables (Cursor / Task Scheduler). Not used for
+  // proxy / WinINET / Clash state; live routing belongs to NODE_OPTIONS hooks.
   const result = spawnSync('reg', ['query', key, '/v', valueName], {
     encoding: 'utf8',
     windowsHide: true,
@@ -206,62 +207,6 @@ function readPersistentEnv(name) {
     )
 }
 
-function proxyUrlFromWinInetServer(server) {
-  if (typeof server !== 'string' || server.trim().length === 0) return undefined
-  let picked = server.trim()
-  if (picked.includes('=')) {
-    const map = {}
-    for (const part of picked.split(';')) {
-      const i = part.indexOf('=')
-      if (i <= 0) continue
-      map[part.slice(0, i).trim().toLowerCase()] = part.slice(i + 1).trim()
-    }
-    picked = map.https || map.http || map.all || Object.values(map)[0]
-  }
-  if (typeof picked !== 'string' || picked.length === 0) return undefined
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(picked)) return picked
-  return `http://${picked}`
-}
-
-function readWinInetProxyUrl() {
-  if (process.platform !== 'win32') return undefined
-  const enabled = readWindowsRegValue(
-    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-    'ProxyEnable',
-  )
-  // REG_DWORD prints as 0x1 / 0x00000001 / 1
-  if (!enabled || !/^0x0*1$|^1$/i.test(enabled)) return undefined
-  const server = readWindowsRegValue(
-    'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
-    'ProxyServer',
-  )
-  return proxyUrlFromWinInetServer(server)
-}
-
-function proxyEndpointReachable(proxyUrl, timeoutMs = 400) {
-  let url
-  try {
-    url = new URL(proxyUrl)
-  } catch {
-    return false
-  }
-  const host = url.hostname
-  const port = Number(url.port) || (url.protocol === 'https:' ? 443 : 80)
-  if (!host || !port) return false
-  return new Promise(resolve => {
-    const socket = net.connect({ host, port })
-    const finish = (value) => {
-      socket.removeAllListeners()
-      socket.destroy()
-      resolve(value)
-    }
-    socket.setTimeout(timeoutMs)
-    socket.once('connect', () => finish(true))
-    socket.once('timeout', () => finish(false))
-    socket.once('error', () => finish(false))
-  })
-}
-
 function nodeOptionsRequiresPresent(nodeOptions) {
   if (typeof nodeOptions !== 'string' || nodeOptions.trim().length === 0) return false
   const requires = [...nodeOptions.matchAll(/(?:--require|-r)\s+(\S+)/g)].map(m => m[1])
@@ -270,16 +215,17 @@ function nodeOptionsRequiresPresent(nodeOptions) {
 }
 
 /**
- * Outbound routing for spawned Node processes.
+ * Outbound env for spawned Node processes — OS-agnostic.
  *
- * Host (long-lived): prefer User `NODE_OPTIONS` sysproxy hook; strip static
- * HTTP(S)_PROXY so the hook can follow WinINET live. If WinINET points at a
- * dead local proxy (Clash quit, toggle left on), drop the hook and go direct.
+ * This plugin does not read system proxy settings and does not probe Clash.
+ * Live on/off after DSH is up is the job of whatever `NODE_OPTIONS` hook the
+ * user installed (e.g. sysproxy-sync re-reads WinINET on each fetch). We only:
  *
- * One-shot CLI: always drop NODE_OPTIONS (persistent --require hangs tsx/pnpm);
- * if WinINET proxy is up, set a static HTTPS_PROXY for that short process.
+ * - attach User/process `NODE_OPTIONS` to the long-lived host
+ * - strip static HTTP(S)_PROXY on the host so a hook is not pinned to one port
+ * - strip `NODE_OPTIONS` on one-shot CLIs so tsx/pnpm cannot hang
  */
-async function prepareOutboundEnv(baseEnv, mode) {
+function prepareOutboundEnv(baseEnv, mode) {
   const env = { ...baseEnv }
   env.NO_PROXY = env.NO_PROXY
     ? `${env.NO_PROXY},127.0.0.1,localhost`
@@ -289,57 +235,30 @@ async function prepareOutboundEnv(baseEnv, mode) {
     ? env.NODE_OPTIONS.trim()
     : readPersistentEnv('NODE_OPTIONS')?.trim()
 
-  if (process.platform !== 'win32') {
-    if (mode === 'oneshot') {
-      delete env.NODE_OPTIONS
-      return { env, note: 'one-shot outbound (NODE_OPTIONS stripped)' }
-    }
-    if (nodeOptions) env.NODE_OPTIONS = nodeOptions
-    else delete env.NODE_OPTIONS
-    return { env, note: nodeOptions ? 'host outbound via NODE_OPTIONS' : 'host outbound direct' }
-  }
-
-  const proxyUrl = readWinInetProxyUrl()
-  const proxyUp = proxyUrl ? await proxyEndpointReachable(proxyUrl) : false
-
   if (mode === 'oneshot') {
     delete env.NODE_OPTIONS
-    stripProxyEnv(env)
-    if (proxyUrl && proxyUp) {
-      for (const name of PROXY_ENV_NAMES) env[name] = proxyUrl
-      return { env, note: `one-shot outbound via ${proxyUrl}` }
-    }
-    return { env, note: proxyUrl
-      ? `one-shot outbound direct (${proxyUrl} unreachable)`
-      : 'one-shot outbound direct' }
+    return { env, note: 'one-shot: NODE_OPTIONS stripped (parent proxy env unchanged)' }
   }
 
-  // host: sysproxy owns routing — never pin a static Clash port at boot
   stripProxyEnv(env)
-  if (proxyUrl && !proxyUp) {
-    delete env.NODE_OPTIONS
-    return { env, note: `WinINET proxy ${proxyUrl} unreachable; host started direct (no sysproxy)` }
-  }
   if (nodeOptions && nodeOptionsRequiresPresent(nodeOptions)) {
     env.NODE_OPTIONS = nodeOptions
-    return { env, note: `host outbound via NODE_OPTIONS (${proxyUrl ? `WinINET ${proxyUrl}` : 'no WinINET proxy'})` }
+    return { env, note: 'host: NODE_OPTIONS attached (live proxy follows the hook, if any)' }
   }
   if (nodeOptions) {
     delete env.NODE_OPTIONS
-    return { env, note: `NODE_OPTIONS require missing on disk; host started direct` }
+    return { env, note: 'host: NODE_OPTIONS require missing on disk; outbound direct' }
   }
   delete env.NODE_OPTIONS
-  return { env, note: 'host outbound direct (no NODE_OPTIONS)' }
+  return { env, note: 'host: no NODE_OPTIONS; outbound direct' }
 }
 
 function envForHost(layout, extra = {}) {
-  const env = { ...process.env, ...extra }
+  const base = { ...process.env, ...extra }
   if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
-    env.DSH_HOME = layout.dshHome
+    base.DSH_HOME = layout.dshHome
   }
-  // Sync path used by callers that cannot await. Prefer `envForHostAsync`.
-  env.NO_PROXY = env.NO_PROXY ? `${env.NO_PROXY},127.0.0.1,localhost` : '127.0.0.1,localhost'
-  return env
+  return prepareOutboundEnv(base, 'host').env
 }
 
 async function envForHostAsync(layout, extra = {}) {
@@ -351,10 +270,11 @@ async function envForHostAsync(layout, extra = {}) {
 }
 
 function envForOneShot(layout) {
-  // Sync fallback for tests / rare callers — strips NODE_OPTIONS only.
-  const env = envForHost(layout)
-  delete env.NODE_OPTIONS
-  return env
+  const base = { ...process.env }
+  if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
+    base.DSH_HOME = layout.dshHome
+  }
+  return prepareOutboundEnv(base, 'oneshot').env
 }
 
 async function envForOneShotAsync(layout) {
@@ -1043,12 +963,10 @@ export {
   pidAlive,
   prepareOutboundEnv,
   probeHttp,
-  proxyUrlFromWinInetServer,
   readLayout,
   readPidFile,
   readPersistentEnv,
   readWebUrl,
-  readWinInetProxyUrl,
   releaseSupervisor,
   requestHostAdoptSupervisor,
   requestStopFiles,

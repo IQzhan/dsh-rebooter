@@ -30,14 +30,15 @@ Closing a terminal, Explorer, or the browser therefore does not end DSH. Only `s
 
 ## Outbound proxy (Gemini / LLM)
 
-Cursor and short CLIs often start **without** the User-level `NODE_OPTIONS=--require …/sysproxy-sync…` that routes Node `fetch` through the live WinINET proxy. A host started that way cannot reach Google APIs from networks that need Clash.
+This plugin does **not** read WinINET, probe Clash, or set `HTTPS_PROXY` from the OS. Live Clash on/off after DSH is already running belongs to the user’s `NODE_OPTIONS` hook (e.g. `sysproxy-sync`, which re-reads system proxy on each `fetch`).
 
-On spawn the plugin therefore:
+The plugin only does portable env plumbing:
 
-1. Merges User/Machine `NODE_OPTIONS` when the parent process env lacks it (Windows `reg` read — same intent as the old launcher’s `Get-DshMergedUserEnv`).
-2. Strips static `HTTP(S)_PROXY` on the **host** so sysproxy can follow WinINET on/off live.
-3. If WinINET points at a local proxy that is **not listening**, drops `NODE_OPTIONS` and goes direct (dead Clash left enabled).
-4. For **one-shot** update CLIs, strips `NODE_OPTIONS` (avoids hanging `tsx`/`pnpm`) and, when the proxy is up, sets a static `HTTPS_PROXY` for that short process only.
+1. Attach User/process `NODE_OPTIONS` to the long-lived host when the require path exists (so a live hook stays loaded for the whole session — including when Clash starts dead and comes back later).
+2. Strip static `HTTP(S)_PROXY` on the **host** so a pinned port cannot override the hook.
+3. Strip `NODE_OPTIONS` on **one-shot** update CLIs so `tsx` / `pnpm` cannot hang; leave any parent `HTTPS_PROXY` alone.
+
+Never drop the host hook because a local proxy port was unreachable at boot — that would freeze outbound mode until restart.
 
 ## Update means every plugin, after DSH is down
 

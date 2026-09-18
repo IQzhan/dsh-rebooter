@@ -1,10 +1,10 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   ensureStateDir, envForHostAsync, envForOneShot, installDesktopLauncher, isWebListening, killPid,
   launcherBody, launcherNames, listenControl, lookOnPath, mergeLayout, pidAlive,
-  probeHttp, proxyUrlFromWinInetServer, readLayout, readPidFile, requestStopFiles, resolveHome, sendControl,
+  probeHttp, readLayout, readPidFile, requestStopFiles, resolveHome, sendControl,
   sleep, spawnProcess, startControlServer, statePaths, writePidFile,
 } from './dsh-rebooter-runtime.js'
 import { cleanup, scratch } from './test-support.mjs'
@@ -48,21 +48,22 @@ try {
   check('one-shot CLI drops NODE_OPTIONS', Object.hasOwn(env, 'NODE_OPTIONS'), false)
   check('one-shot CLI still has DSH_HOME', env.DSH_HOME, home)
 
-  check('WinINET plain host:port becomes http URL',
-    proxyUrlFromWinInetServer('127.0.0.1:7890'), 'http://127.0.0.1:7890')
-  check('WinINET protocol map prefers https=',
-    proxyUrlFromWinInetServer('http=127.0.0.1:7890;https=127.0.0.1:7891'), 'http://127.0.0.1:7891')
-
-  if (process.platform === 'win32') {
-    const previousHttps = process.env.HTTPS_PROXY
-    process.env.HTTPS_PROXY = 'http://127.0.0.1:9'
-    const prepared = await envForHostAsync({ dshHome: home })
-    check('host strips static HTTPS_PROXY on Windows', prepared.env.HTTPS_PROXY, undefined)
-    if (previousHttps === undefined) delete process.env.HTTPS_PROXY
-    else process.env.HTTPS_PROXY = previousHttps
-  } else {
-    check('host strips static HTTPS_PROXY on Windows', true, true)
-  }
+  const previousHttps = process.env.HTTPS_PROXY
+  const previousNodeOptions = process.env.NODE_OPTIONS
+  process.env.HTTPS_PROXY = 'http://127.0.0.1:9'
+  const hook = join(home, 'outbound-hook.cjs')
+  writeFileSync(hook, "'use strict'\n")
+  process.env.NODE_OPTIONS = `--require ${hook}`
+  const prepared = await envForHostAsync({ dshHome: home })
+  check('host strips static HTTPS_PROXY', prepared.env.HTTPS_PROXY, undefined)
+  check('host keeps NODE_OPTIONS when require exists', prepared.env.NODE_OPTIONS, `--require ${hook}`)
+  process.env.NODE_OPTIONS = `--require ${join(home, 'missing-hook.cjs')}`
+  const missing = await envForHostAsync({ dshHome: home })
+  check('host drops NODE_OPTIONS when require is missing', Object.hasOwn(missing.env, 'NODE_OPTIONS'), false)
+  if (previousHttps === undefined) delete process.env.HTTPS_PROXY
+  else process.env.HTTPS_PROXY = previousHttps
+  if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS
+  else process.env.NODE_OPTIONS = previousNodeOptions
 
   check('lookOnPath finds node', typeof lookOnPath('node') === 'string' || lookOnPath('node.exe') !== undefined, true)
 
