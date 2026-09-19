@@ -30,7 +30,7 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，同一页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。「打开界面」在独立窗口里打开这个页面。若已绑定程序，仍打开该程序。
+需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，DSH Server 和 DSH 页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。「打开界面」在独立窗口里打开这个页面。若已绑定程序，仍打开该程序。
 
 然后重启 `dsh web`。Host 挂载时也会尽力写入面板入口。也可手动：
 
@@ -71,7 +71,7 @@ git pull && node build-rebooter.mjs
 node verify.mjs
 ```
 
-**8 个套件、175 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**8 个套件、176 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 

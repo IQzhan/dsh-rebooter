@@ -97,6 +97,8 @@ check('darwin desktop entry is an app bundle, not a terminal command',
 check('default UI open launches the app window', /\[cli, 'app'\]/.test(runtime), true)
 check('runtime does not read or rewrite proxy environment',
   /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
+check('runtime does not install an OS web view',
+  /apt-get|pkexec|webview2-setup|fwlink/i.test(runtime), false)
 
 const failed = results.filter(result => !result.ok)
 for (const result of results) {

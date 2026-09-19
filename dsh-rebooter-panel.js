@@ -670,7 +670,12 @@ function startPanelServer(paths, layout, options = {}) {
         const prefs = readPanelPrefs(paths)
         if (!prefs.openApp) {
           const target = readWebUrl(paths, layout)
-          const shown = await showAppWindow(target, paths)
+          let shown = false
+          try {
+            shown = await showAppWindow(target, paths)
+          } catch (error) {
+            logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
+          }
           if (!shown) openUrl(target)
           sendJson(res, 200, { ok: true, url: target, window: shown })
           return
@@ -905,7 +910,12 @@ async function ensureSharedApp(paths) {
     logSupervisor(paths, 'window host: module has no Application')
     return null
   }
-  sharedApp = new Application()
+  try {
+    sharedApp = new Application()
+  } catch (error) {
+    logSupervisor(paths, `window host: ${error instanceof Error ? error.message : error}`)
+    return null
+  }
   return sharedApp
 }
 
@@ -930,15 +940,21 @@ async function showFrameless(url, paths) {
   if (revealFrame()) return true
   const app = await ensureSharedApp(paths)
   if (!app) return false
-  const shell = app.createBrowserWindow({
-    title: 'DSH Server',
-    width: 440,
-    height: 220,
-    decorations: false,
-    resizable: false,
-    minimizable: true,
-    maximizable: false,
-  })
+  let shell
+  try {
+    shell = app.createBrowserWindow({
+      title: 'DSH Server',
+      width: 440,
+      height: 220,
+      decorations: false,
+      resizable: false,
+      minimizable: true,
+      maximizable: false,
+    })
+  } catch (error) {
+    logSupervisor(paths, `frameless window: ${error instanceof Error ? error.message : error}`)
+    return false
+  }
   if (typeof shell.setHasShadow === 'function') {
     try { shell.setHasShadow(false) } catch { /* host may not support it */ }
   }
@@ -1422,16 +1438,22 @@ async function showAppWindowNow(url, paths) {
   }
   const app = await ensureSharedApp(paths)
   if (!app) return false
-  const shell = app.createBrowserWindow({
-    title: 'DSH',
-    width: 1200,
-    height: 800,
-    decorations: false,
-    resizable: true,
-    minimizable: true,
-    maximizable: true,
-    showMenu: false,
-  })
+  let shell
+  try {
+    shell = app.createBrowserWindow({
+      title: 'DSH',
+      width: 1200,
+      height: 800,
+      decorations: false,
+      resizable: true,
+      minimizable: true,
+      maximizable: true,
+      showMenu: false,
+    })
+  } catch (error) {
+    logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
+    return false
+  }
   if (typeof shell.center === 'function') {
     try { shell.center() } catch { /* keep the default position */ }
   }
@@ -1516,7 +1538,12 @@ async function runAppWindow() {
     throw error
   }
   const url = readWebUrl(paths, layout)
-  const shown = await showAppWindow(url, paths)
+  let shown = false
+  try {
+    shown = await showAppWindow(url, paths)
+  } catch (error) {
+    logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
+  }
   if (!shown) openUrl(url)
   await forever()
   return { ok: true, url, shown }
@@ -1544,9 +1571,14 @@ async function postFrame(url, body) {
 
 async function openPanelWindow(url, paths, options = {}) {
   if (typeof url !== 'string' || url.length === 0) return false
-  const shown = options.reuse === true
-    ? await postFrame(url, { op: 'show' })
-    : await showFrameless(url, paths)
+  let shown = false
+  try {
+    shown = options.reuse === true
+      ? await postFrame(url, { op: 'show' })
+      : await showFrameless(url, paths)
+  } catch (error) {
+    logSupervisor(paths, `panel window: ${error instanceof Error ? error.message : error}`)
+  }
   if (!shown) {
     logSupervisor(paths, 'panel window unavailable; opening with the default handler')
     openUrl(url)

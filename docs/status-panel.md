@@ -46,7 +46,7 @@ Chinese summary: [`status-panel.zh.md`](status-panel.zh.md).
   starting another server.
 - **Job runner** = existing `performAction` / `dispatchCli`. The panel never
   embeds lifecycle code; it only starts the CLI and reads progress files.
-- **Window shell** = OS web view (`WebView2`, system WebKit, or `WebKitGTK`) loading the local URL. If that runtime is missing, the page opens with the default URL handler. Copy follows `zh` or `en`. Desktop entry: Windows shortcut, macOS `.app` (no Terminal), Linux `.desktop` with `dsh-server.png`. Generated under the plugin package (`package/panel/`) and named **DSH Server**.
+- **Window shell** = OS web view (`WebView2`, system WebKit, or `WebKitGTK`) loading the local URL. If that runtime is missing, DSH Server and the DSH page open with the default URL handler. Copy follows `zh` or `en`. Desktop entry: Windows shortcut, macOS `.app` (no Terminal), Linux `.desktop` with `dsh-server.png`. Generated under the plugin package (`package/panel/`) and named **DSH Server**.
 
 ## Status bus files
 
