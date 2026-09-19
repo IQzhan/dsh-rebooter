@@ -2,13 +2,13 @@
 
 **English** · [简体中文](README.zh.md)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start service / stop service / restart service / update / open**. The page window's power button opens the lifecycle menu; one desktop entry **DSH Server** for the status panel. Update stops DSH first, then upgrades **every plugin** in the current profile.
+A lightweight [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start service / stop service / restart service / update / open**. The default web UI is its own window and does not need a browser. The page window's power button opens the lifecycle menu; one desktop entry **DSH Server** for the status panel. Update stops DSH first, then upgrades **every plugin** in the current profile.
 
 Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design notes: [`docs/design-notes.md`](docs/design-notes.md). Status panel: [`docs/status-panel.md`](docs/status-panel.md).
 
 ## How to use
 
-Double-click **DSH Server** on the desktop. That opens a small window outside the system browser, like a separate client. Open on the panel does the same for the DSH page by default. It does not open Chrome, Edge, or another browser. A program bound with the gear still opens instead. The pictures show the Chinese labels.
+**A lightweight plugin. The default web UI is its own window and does not need a browser.** Open does not launch Chrome, Edge, or another browser. A program bound with the gear still opens instead. Double-click **DSH Server** on the desktop to open the panel, which is the same kind of window. The pictures show the Chinese labels.
 
 **Both windows are only a display shell.** Closing or minimizing them does not stop a running service or the supervisor. To stop, use Stop service or Update and stop. The window's own close button only closes that window.
 
@@ -18,15 +18,15 @@ The separate window needs the OS web component: WebView2 on Windows, the built-i
 
 Double-click this icon to open the panel.
 
-![Panel while the service is stopped](docs/images/panel-stopped.png)
+![Panel while the service is stopped](docs/images/panel-stopped_en.png)
 
 Stopped: start, update, update and start. If "open the page when the service starts" is checked, the next start also opens the page.
 
-![Panel while the service is running](docs/images/panel-running.png)
+![Panel while the service is running](docs/images/panel-running_en.png)
 
 Running: stop, restart, update and stop, update and restart, open the page. The gear binds another program; after that, Open opens that program.
 
-![Power menu on the DSH page](docs/images/page-menu.png)
+![Power menu on the DSH page](docs/images/page-menu_en.png)
 
 The picture above is that separate window, not a browser tab. The top-right starts empty. Move the pointer into the small corner where the top edge meets the right edge, and the buttons appear: power, minimize, maximize, close. Move away and they hide. The power button opens the four items above; Start is not in that menu. The close control at the far right only closes this window.
 

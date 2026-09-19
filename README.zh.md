@@ -2,13 +2,13 @@
 
 [English](README.md) · **简体中文**
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**开启服务 / 关闭服务 / 重启服务 / 更新 / 打开界面**的插件：页面窗口操作栏的电源按钮弹出生命周期菜单；桌面一个 **DSH Server** 状态面板入口。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供一个轻量插件，用来**开启服务 / 关闭服务 / 重启服务 / 更新 / 打开界面**。默认打开的页面是独立窗口，不依赖浏览器。页面窗口操作栏的电源按钮弹出生命周期菜单；桌面一个 **DSH Server** 状态面板入口。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
 
 制作规范见 [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md)；设计取舍见 [`docs/design-notes.md`](docs/design-notes.md)；状态面板见 [`docs/status-panel.md`](docs/status-panel.md)。
 
 ## 怎么用
 
-桌面双击 **DSH Server**，打开的是脱离系统浏览器的小窗口，用起来像一个独立客户端。点「打开界面」时，默认也是这样一个窗口里的 DSH 页面，不会进 Chrome、Edge 或其他浏览器。只有在齿轮里绑定了别的程序，才会改去打开那个程序。
+**轻量插件。默认打开的页面是独立窗口，不依赖浏览器。** 点「打开界面」不会进 Chrome、Edge 或其他浏览器。只有在齿轮里绑定了别的程序，才会改开那个程序。桌面双击 **DSH Server**，打开的面板也是这种窗口。
 
 **这两个窗口都只是展示壳。** 关掉或最小化，已经在跑的服务和监督进程不受影响。要停服务，用「关闭服务」或「更新并关闭服务」。窗口自己的关闭按钮只关窗口。
 
