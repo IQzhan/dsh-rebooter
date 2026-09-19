@@ -6,6 +6,30 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for
 
 Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design notes: [`docs/design-notes.md`](docs/design-notes.md). Status panel: [`docs/status-panel.md`](docs/status-panel.md).
 
+## How to use
+
+Double-click **DSH Server** on the desktop. That opens a small window outside the system browser, like a separate client. Open on the panel does the same for the DSH page by default. It does not open Chrome, Edge, or another browser. A program bound with the gear still opens instead. The pictures show the Chinese labels.
+
+**Both windows are only a display shell.** Closing or minimizing them does not stop a running service or the supervisor. To stop, use Stop service or Update and stop. The window's own close button only closes that window.
+
+The separate window needs the OS web component: WebView2 on Windows, the built-in WebKit on macOS, and WebKitGTK on Linux. If that component is missing, or the window cannot be created, the plugin does not install it. DSH Server and the DSH page then open with the system default program, usually the browser. In the browser there is no top-right button group, blank areas cannot drag the window, and Browse on the panel cannot pick a file — type the path. Start, stop, restart, update, language, and theme still work.
+
+![Desktop entry named DSH Server](docs/images/desktop.png)
+
+Double-click this icon to open the panel.
+
+![Panel while the service is stopped](docs/images/panel-stopped.png)
+
+Stopped: start, update, update and start. If "open the page when the service starts" is checked, the next start also opens the page.
+
+![Panel while the service is running](docs/images/panel-running.png)
+
+Running: stop, restart, update and stop, update and restart, open the page. The gear binds another program; after that, Open opens that program.
+
+![Power menu on the DSH page](docs/images/page-menu.png)
+
+The picture above is that separate window, not a browser tab. The top-right starts empty. Move the pointer into the small corner where the top edge meets the right edge, and the buttons appear: power, minimize, maximize, close. Move away and they hide. The power button opens the four items above; Start is not in that menu. The close control at the far right only closes this window.
+
 ## What it does
 
 | Action | Menu | Panel / CLI |
