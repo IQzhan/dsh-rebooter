@@ -94,6 +94,7 @@ check('desktop launcher may use WScript for a windowless start', /WScript\.Shell
 check('desktop shortcut targets wscript host string', /wscript\.exe/.test(runtime), true)
 check('darwin desktop entry is an app bundle, not a terminal command',
   runtime.includes("'DSH Server.app'") && !/join\(desk, 'DSH Server\.command'\)/.test(runtime), true)
+check('default UI open launches the app window', /\[cli, 'app'\]/.test(runtime), true)
 check('runtime does not read or rewrite proxy environment',
   /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
 

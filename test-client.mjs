@@ -8,31 +8,22 @@ function check(label, actual, expected) {
   results.push({ label, ok, actual, expected })
 }
 
-const source = readFileSync(join(ROOT, 'dsh-rebooter.client.js'), 'utf8')
+const client = readFileSync(join(ROOT, 'dsh-rebooter.client.js'), 'utf8')
+const panel = readFileSync(join(ROOT, 'dsh-rebooter-panel.js'), 'utf8')
 
-const copyBlock = /const COPY = \{([\s\S]*?)\n\}/.exec(source)
-check('the client has a COPY dictionary', copyBlock !== null, true)
-
-const withoutCopy = source.replace(copyBlock?.[0] ?? '', '')
-  .split('\n')
+const clientCode = client.split('\n')
   .filter(line => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'))
   .join('\n')
-check('CJK characters live only in the dictionary and comments',
-  /[\u4e00-\u9fff]/.test(withoutCopy), false)
-
-const zhBlock = /zh: \{([\s\S]*?)\n  \}/.exec(source)?.[1] ?? ''
-const enBlock = /en: \{([\s\S]*?)\n  \}/.exec(source)?.[1] ?? ''
-const zhKeys = [...zhBlock.matchAll(/'([^']+)':/g)].map(entry => entry[1])
-const enKeys = [...enBlock.matchAll(/'([^']+)':/g)].map(entry => entry[1])
-check('zh and en expose the same keys', [...zhKeys].sort(), [...enKeys].sort())
-
-check('the menu does not include start', /menu\.start/.test(source), false)
-check('the client registers sidebar.footer.action', source.includes("name: 'sidebar.footer.action'"), true)
-check('the client uses its own list id', source.includes("id: 'dsh-rebooter'"), true)
-check('React is not read at module top level', /^\s*const E = React\.createElement/m.test(source), false)
-check('wide foot layout reaches past display:contents slot', source.includes('> * > * > [data-plugin="dsh-rebooter"].wide'), true)
-check('wide mode moves this plugin into the settings trigger row', source.includes('insertBefore(node, row.firstChild)'), true)
-check('wide foot layout does not rewrite sidebar.settings', source.includes("name: 'sidebar.settings'"), false)
+check('client source has no CJK', /[\u4e00-\u9fff]/.test(clientCode), false)
+check('client does not register a sidebar slot', client.includes('sidebar.footer.action'), false)
+check('client does not draw a page button', client.includes('dsh-rebooter-btn'), false)
+check('client inject list is empty', /export const inject = \[\]/.test(client), true)
+check('window menu has the four previous actions', panel.includes("['stop', 'restart', 'update-stop', 'update-restart']"), true)
+check('window menu does not offer start', panel.includes("data-act', 'start'") || panel.includes("['start'"), false)
+check('window menu posts the host action route', panel.includes("'/api/dsh-rebooter/action'"), true)
+check('power button opens a menu', panel.includes("setAttribute('aria-haspopup', 'menu')"), true)
+check('power click does not stop or start immediately', panel.includes("live ? 'stop' : 'start'"), false)
+check('window close is still only a window close', panel.includes("op === 'close'") && panel.includes('closeAppWindow()'), true)
 
 const failed = results.filter(result => !result.ok)
 for (const result of results) {

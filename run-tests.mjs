@@ -7,7 +7,7 @@ const SUITES = [
   ['test-panel.mjs', '状态面板：快照、HTTP、文档'],
   ['test-host.mjs', '适配层：路由、layout、apply 返回值'],
   ['test-package.mjs', '包：两个真实加载器'],
-  ['test-client.mjs', '菜单：双语、slot、不在顶层读 React'],
+  ['test-client.mjs', '菜单：窗口操作栏，不占侧栏'],
   ['test-docs.mjs', '文档：双语同步'],
   ['test-portability.mjs', '可移植性：无绝对路径、无 Windows 专有实现'],
 ]

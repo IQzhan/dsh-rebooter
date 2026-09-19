@@ -196,8 +196,27 @@ function openDshUi(paths, layout) {
     spawnDetached(prefs.openApp, [url])
     return { ok: true, url, app: prefs.openApp }
   }
-  openUrl(url)
-  return { ok: true, url }
+  const cli = cliPathFromHost()
+  spawnDetached(process.execPath, [cli, 'app'])
+  return { ok: true, url, app: null }
+}
+
+async function requestAppWindowClose(layout) {
+  const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 800)
+  try {
+    await fetch(`http://${DEFAULT_HOST}:${port}/api/app`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ op: 'close' }),
+      signal: ac.signal,
+    })
+  } catch {
+    /* the page window is owned by the panel; it may not be open */
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function writePidFile(path, pid) {
@@ -502,6 +521,9 @@ function copyIconAsset(dir, name) {
 /** Shortcut icon. A .vbs has no icon resource, so the shortcut must not point at it. */
 function writePanelIcon(dir) {
   copyIconAsset(dir, 'dsh-server.png')
+  copyIconAsset(dir, 'dsh-server.rgba')
+  copyIconAsset(dir, 'dsh.png')
+  copyIconAsset(dir, 'dsh.rgba')
   const dest = join(dir, 'dsh-server.ico')
   const designed = join(dirname(dirname(dir)), 'icons', 'dsh-server.ico')
   if (existsSync(designed)) {
@@ -1079,6 +1101,7 @@ async function performAction(action, options = {}) {
     }
 
     if (action === 'stop' || action === 'restart' || action === 'update-stop' || action === 'update-restart') {
+      if (action === 'stop' || action === 'update-stop') await requestAppWindowClose(layout)
       appendJobLog(paths, 'stopping DSH…')
       await requestSupervisorStop(paths, layout)
     }
@@ -1096,11 +1119,7 @@ async function performAction(action, options = {}) {
         if (!ok) throw new Error('supervisor did not start')
         const url = await waitWebReady(paths, layout, Math.min(options.timeoutMs ?? 120000, 15000))
           ?? readWebUrl(paths, layout)
-        if (open) {
-          const prefsNow = readPanelPrefs(paths)
-          if (prefsNow.openApp) spawnDetached(prefsNow.openApp, [url])
-          else openUrl(url)
-        }
+        if (open) openDshUi(paths, layout)
         if (trackJob) endJob(paths, 'ok', 'already running')
         return { ok: true, action, url, skipped: true }
       }
@@ -1109,11 +1128,7 @@ async function performAction(action, options = {}) {
       if (!ok) throw new Error('supervisor did not start')
       const url = await waitWebReady(paths, layout, options.timeoutMs ?? 120000)
       if (url === undefined) throw new Error('DSH did not become ready')
-      if (open) {
-        const prefsNow = readPanelPrefs(paths)
-        if (prefsNow.openApp) spawnDetached(prefsNow.openApp, [url])
-        else openUrl(url)
-      }
+      if (open) openDshUi(paths, layout)
       if (trackJob) endJob(paths, 'ok', 'ready')
       return { ok: true, action, url }
     }

@@ -145,6 +145,9 @@ try {
   const deadline = Date.now() + 4000
   while (pidAlive(child.pid) && Date.now() < deadline) await sleep(50)
   check('SIGTERM reaps the child', pidAlive(child.pid), false)
+  const runtimeSource = readFileSync(join(process.cwd(), 'dsh-rebooter-runtime.js'), 'utf8')
+  check('stopping the service closes the page window',
+    runtimeSource.includes("if (action === 'stop' || action === 'update-stop') await requestAppWindowClose(layout)"), true)
 } finally {
   if (previousHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousHome

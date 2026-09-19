@@ -19,6 +19,9 @@ async function runCli(argv = process.argv) {
   if (action === 'panel') {
     return runPanel({ serveOnly, fromHost })
   }
+  if (action === 'app') {
+    return runAppWindow()
+  }
   if (action === 'desktop') {
     const paths = ensureStateDir(statePaths())
     const layout = readLayout(paths) || captureLaunch(process)
@@ -30,7 +33,7 @@ async function runCli(argv = process.argv) {
     return { ok: true, action: 'desktop', paths: installed }
   }
   if (!isAction(action)) {
-    throw new Error(`usage: dsh-rebooter <${ALL_ACTIONS.join('|')}|supervisor|panel|desktop>`)
+    throw new Error(`usage: dsh-rebooter <${ALL_ACTIONS.join('|')}|supervisor|panel|app|desktop>`)
   }
   const open = forceOpen ? true : noOpen ? false : undefined
   return performAction(action, { fromHost, open })
@@ -47,6 +50,7 @@ function printCliHelp() {
     '  update-restart    stop, update every profile plugin, then start',
     '  open              open the bound app or the browser at the DSH URL',
     '  panel             open the DSH Server status panel',
+    '  app               open the DSH page in its own window',
     '  desktop           write package/panel entry + Desktop "DSH Server" shortcut',
   ]
   return lines.join('\n')

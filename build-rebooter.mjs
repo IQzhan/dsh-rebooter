@@ -169,7 +169,7 @@ const manifest = {
   name: PLUGIN_NAME,
   version: VERSION,
   private: true,
-  description: 'Start, stop, restart, and update DeepSeek Harness (including every profile plugin) from a sidebar menu or the desktop.',
+  description: 'Start, stop, restart, and update DeepSeek Harness (including every profile plugin) from the page window or the desktop.',
   type: 'commonjs',
   main: './lib/index.cjs',
   bin: { 'dsh-rebooter': './lib/cli.cjs' },
@@ -184,8 +184,8 @@ const manifest = {
     client: {
       platform: 'web',
       immediately: false,
-      inject: ['@deepseek-ai/dsh-client-ui-slots'],
-      external: ['react'],
+      inject: [],
+      external: [],
     },
   },
   dependencies: {
@@ -222,13 +222,10 @@ await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
   '',
 ].join('\n'), 'utf8')
 
-const designedIcon = join(here, 'icons', 'dsh-server.ico')
-const designedPng = join(here, 'icons', 'dsh-server.png')
-if (existsSync(designedIcon)) {
-  await copyFile(designedIcon, join(OUT_PACKAGE, 'panel', 'dsh-server.ico'))
-}
-if (existsSync(designedPng)) {
-  await copyFile(designedPng, join(OUT_PACKAGE, 'panel', 'dsh-server.png'))
+const iconNames = ['dsh-server.ico', 'dsh-server.png', 'dsh-server.rgba', 'dsh.ico', 'dsh.png', 'dsh.rgba']
+for (const name of iconNames) {
+  const from = join(here, 'icons', name)
+  if (existsSync(from)) await copyFile(from, join(OUT_PACKAGE, 'panel', name))
 }
 
 const hostInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', '@webviewjs', 'webview'))

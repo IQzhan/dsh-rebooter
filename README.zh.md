@@ -2,7 +2,7 @@
 
 [English](README.md) · **简体中文**
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**启动 / 关闭 / 重启 / 更新 / 打开界面**的插件：侧栏「设置」旁一个菜单；桌面一个 **DSH Server** 状态面板入口。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
+为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**开启服务 / 关闭服务 / 重启服务 / 更新 / 打开界面**的插件：页面窗口操作栏的电源按钮弹出生命周期菜单；桌面一个 **DSH Server** 状态面板入口。更新会先关掉 DSH，再升级当前 profile 里的**全部插件**。
 
 制作规范见 [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md)；设计取舍见 [`docs/design-notes.md`](docs/design-notes.md)；状态面板见 [`docs/status-panel.md`](docs/status-panel.md)。
 
@@ -19,9 +19,9 @@
 | `open` | 否 | 是（已启动时） |
 | `panel` | — | 打开 **DSH Server** |
 
-菜单注册在 `sidebar.footer.action`。宽侧栏用 CSS 把页脚排成一行，并把本按钮放进设置 trigger 行；窄轨仍叠在设置上方。
+这四项从页面窗口操作栏的电源按钮弹出。点选后请求 `/api/dsh-rebooter/action`。菜单里没有开启服务。
 
-启动后由独立的 Node 监督进程常驻：Web 宿主异常退出会拉起下一代，直到你主动 `stop`。启动**默认不再**打开浏览器，除非在面板勾选「启动时打开界面」（或 CLI 传 `--open`）。
+开启服务后由独立的 Node 监督进程常驻：Web 宿主异常退出会拉起下一代，直到你主动 `stop`。开启服务**默认不再**打开浏览器，除非在面板勾选「开启服务时打开界面」（或 CLI 传 `--open`）。关闭服务时会一并关掉界面窗口。窗口上的关闭只关窗口，不停服务。
 
 ## 安装
 
@@ -30,7 +30,7 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，同一页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。
+需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，同一页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。「打开界面」在独立窗口里打开这个页面。若已绑定程序，仍打开该程序。
 
 然后重启 `dsh web`。Host 挂载时也会尽力写入面板入口。也可手动：
 
@@ -58,7 +58,7 @@ git pull && node build-rebooter.mjs
 | `dsh-rebooter-runtime.js` | Node IO：状态目录、监督进程、任务、桌面入口 |
 | `dsh-rebooter-panel.js` | 状态面板 HTTP + HTML |
 | `dsh-rebooter.host.js` | Cordis 适配：记录启动、HTTP、派出 CLI |
-| `dsh-rebooter.client.js` | 侧栏菜单 |
+| `dsh-rebooter.client.js` | 不画页面；菜单在窗口操作栏 |
 | `dsh-rebooter-cli.js` | `start` / `stop` / `restart` / `update*` / `open` / `panel` / `desktop` |
 | `build-rebooter.mjs` | 构建 `package/` |
 | `docs/dsh-plugin-spec.md` | DSH 插件制作规范 |
@@ -71,7 +71,7 @@ git pull && node build-rebooter.mjs
 node verify.mjs
 ```
 
-**8 个套件、171 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**8 个套件、175 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 

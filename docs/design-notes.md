@@ -14,7 +14,7 @@ This document records **why** `dsh-rebooter` is shaped the way it is. The instal
 | `update-restart` | yes | yes |
 | `open` | no | yes (when running) |
 
-The four in-app items sit on **one** `sidebar.footer.action` control, parked to the **left** of Settings in the wide sidebar: CSS flips the official column foot into a row, and the component moves only its own node into the settings trigger row. The rail stays stacked: two 36px circles do not fit in 56px.
+The four in-app items open from the power button on the page window's control bar. They are not a sidebar control, and they are not a one-click stop. Start stays on the panel and the CLI.
 
 The desktop entry is a single **DSH Server** status panel (see [`status-panel.md`](status-panel.md)). Start does **not** open the browser unless `panel.json` has `autoOpen: true` or the CLI passes `--open`.
 

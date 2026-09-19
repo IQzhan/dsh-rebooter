@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import {
   beginJob, endJob, ensureStateDir, mergeLayout, readJob, statePaths, writePanelPrefs,
 } from './dsh-rebooter-runtime.js'
@@ -32,13 +32,17 @@ try {
 
   const html = panelPageHtml()
   check('panel html is a full document', html.includes('<!DOCTYPE html>') && html.includes('DSH Server'), true)
-  check('panel html has a custom draggable frame', html.includes('id="titlebar"') && html.includes('id="btnMin"') && html.includes('id="btnClose"'), true)
+  check('panel html has a custom draggable frame',
+    html.includes('id="titlebar"') && html.includes('id="btnMin"') && html.includes('id="btnClose"') && !html.includes('id="btnMax"') && html.includes("post('d0:") && html.includes('data-ds-dark-theme') && html.includes('navigator.languages'), true)
   check('binding a program does not use window.prompt', html.includes('id="bindPath"') && html.includes('id="btnBrowse"') && !html.includes('prompt('), true)
 
   writePanelPrefs(paths, { autoOpen: false, openApp: null })
   const idle = await buildSnapshot(paths, layout)
   check('idle snapshot exposes stopped actions', idle.actions, availableActions(false))
   check('idle snapshot is not busy', idle.job.state, 'idle')
+  writeFileSync(join(dirname(paths.root), 'settings.yaml'), 'locale:\n  preference: en\nui-theme:\n  preference: dark\n')
+  const themed = await buildSnapshot(paths, layout)
+  check('snapshot reads DSH locale and theme', themed.appearance, { locale: 'en', theme: 'dark' })
 
   beginJob(paths, 'start', 'starting')
   const busy = await buildSnapshot(paths, layout)
@@ -62,7 +66,9 @@ try {
   const panelSource = readFileSync(join(process.cwd(), 'dsh-rebooter-panel.js'), 'utf8')
   const copyBlock = /const COPY = \{([\s\S]*?)\n\}/.exec(panelSource)
   check('panel has a COPY dictionary', copyBlock !== null, true)
-  const withoutCopy = panelSource.replace(copyBlock?.[0] ?? '', '')
+  const withoutCopy = panelSource
+    .replace(/const COPY = \{[\s\S]*?\n\}/, '')
+    .replace(/const WIN_COPY = \{[\s\S]*?\n\}/, '')
     .split('\n')
     .filter(line => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'))
     .join('\n')
@@ -70,6 +76,8 @@ try {
   const zhKeys = [...(/zh: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
   const enKeys = [...(/en: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
   check('panel zh and en expose the same keys', [...zhKeys].sort(), [...enKeys].sort())
+  check('app window controls are power, min, max, and close on a frameless window',
+    panelSource.includes("'power','min','max','close'") && panelSource.includes("setAttribute('aria-haspopup', 'menu')") && panelSource.includes('setWindowIcon') && panelSource.includes('setTaskbarIcon') && panelSource.includes("body?.op === 'close'") && /title: 'DSH'[\s\S]{0,280}decorations: false/.test(panelSource) && panelSource.includes('window.__dshLook') && panelSource.includes('pushAppAppearance') && panelSource.includes("pagePrimary === 'zh' || pagePrimary === 'en'") && panelSource.includes("hasAttribute('data-ds-dark-theme')") && panelSource.includes('#dsh-app-menu p{display:none'), true)
 } finally {
   cleanup(home)
 }

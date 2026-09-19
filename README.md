@@ -2,7 +2,7 @@
 
 **English** · [简体中文](README.zh.md)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start / stop / restart / update / open**. One sidebar menu beside Settings; one desktop entry **DSH Server** for the status panel. Update stops DSH first, then upgrades **every plugin** in the current profile.
+A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin for **start service / stop service / restart service / update / open**. The page window's power button opens the lifecycle menu; one desktop entry **DSH Server** for the status panel. Update stops DSH first, then upgrades **every plugin** in the current profile.
 
 Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design notes: [`docs/design-notes.md`](docs/design-notes.md). Status panel: [`docs/status-panel.md`](docs/status-panel.md).
 
@@ -19,9 +19,9 @@ Plugin conventions: [`docs/dsh-plugin-spec.md`](docs/dsh-plugin-spec.md). Design
 | `open` | no | yes (when running) |
 | `panel` | — | opens **DSH Server** |
 
-The menu registers on `sidebar.footer.action`. In the wide sidebar the foot is laid out as a row (CSS) and this control is parked in the Settings trigger row; on the rail it stays stacked above Settings.
+The four menu items open from the power button on the page window's control bar. Clicking one posts `/api/dsh-rebooter/action`. Start is not in that menu.
 
-A detached Node supervisor keeps DSH alive after start: an unexpected host exit is relaunched until you `stop`. Start no longer opens the browser unless **Open UI when DSH starts** is checked in the panel (or you pass `--open`).
+A detached Node supervisor keeps DSH alive after start: an unexpected host exit is relaunched until you `stop`. Starting the service no longer opens the browser unless **Open UI when the service starts** is checked in the panel (or you pass `--open`). Stopping the service also closes the page window. The window close button only closes that window.
 
 ## Install
 
@@ -30,7 +30,7 @@ node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-Requires `Node 24` or newer. The panel window uses the OS web view: `WebView2` on Windows, system WebKit on macOS, `WebKitGTK` on Linux. If that runtime is missing, the same page opens with the default URL handler. The panel follows the UI language (`zh` or `en`).
+Requires `Node 24` or newer. The panel window uses the OS web view: `WebView2` on Windows, system WebKit on macOS, `WebKitGTK` on Linux. If that runtime is missing, the same page opens with the default URL handler. The panel follows the UI language (`zh` or `en`). Open UI opens that page in its own window. A bound program, if set, still opens instead.
 
 Then restart `dsh web`. Host mount also tries to write the panel entry. To (re)write it by hand:
 
@@ -58,7 +58,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 | `dsh-rebooter-runtime.js` | Node IO: state dir, supervisor, jobs, desktop entry |
 | `dsh-rebooter-panel.js` | Status panel HTTP + HTML |
 | `dsh-rebooter.host.js` | Cordis adapter: records launch, HTTP, dispatches CLI |
-| `dsh-rebooter.client.js` | Sidebar menu |
+| `dsh-rebooter.client.js` | No page UI; the menu is on the window bar |
 | `dsh-rebooter-cli.js` | `start` / `stop` / `restart` / `update*` / `open` / `panel` / `desktop` |
 | `build-rebooter.mjs` | Builds `package/` |
 | `docs/dsh-plugin-spec.md` | DSH plugin conventions |
@@ -71,7 +71,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 node verify.mjs
 ```
 
-**8 suites, 171 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 175 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

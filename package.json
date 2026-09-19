@@ -12,6 +12,7 @@
     "node": ">=24"
   },
   "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@webviewjs/webview": "^0.4.5"
   }
 }
