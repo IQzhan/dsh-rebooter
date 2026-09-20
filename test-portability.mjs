@@ -95,8 +95,10 @@ check('desktop shortcut targets wscript host string', /wscript\.exe/.test(runtim
 check('darwin desktop entry is an app bundle, not a terminal command',
   runtime.includes("'DSH Server.app'") && !/join\(desk, 'DSH Server\.command'\)/.test(runtime), true)
 check('default UI open launches the app window', /\[cli, 'app'\]/.test(runtime), true)
-check('runtime does not read or rewrite proxy environment',
-  /NODE_OPTIONS|HTTPS_PROXY|HTTP_PROXY|NO_PROXY|HKCU|WinINET/.test(runtime), false)
+check('runtime does not read or rewrite proxy variables',
+  /HTTPS_PROXY|HTTP_PROXY|NO_PROXY|ALL_PROXY|WinINET|Internet Settings/.test(runtime), false)
+check('runtime restores a dropped NODE_OPTIONS from plugin sources then OS user env',
+  /node-options/.test(runtime) && /DSH_NODE_OPTIONS/.test(runtime) && /HKCU\\\\Environment/.test(runtime), true)
 check('runtime does not install an OS web view',
   /apt-get|pkexec|webview2-setup|fwlink/i.test(runtime), false)
 

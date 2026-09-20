@@ -21,7 +21,7 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
-import { spawn, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
 function resolveHome(env = process.env) {
@@ -305,14 +305,71 @@ function spawnDetached(file, args, options = {}) {
   return child
 }
 
-function envForHost(layout, extra = {}) {
-  // Parent environment is copied, not interpreted. Proxy variables, preloads,
-  // and system-proxy state belong to whatever started this process.
+function decodeRegQuery(raw) {
+  const utf16 = raw.toString('utf16le').replace(/^\uFEFF/, '')
+  return utf16.includes('NODE_OPTIONS') ? utf16 : raw.toString('utf8')
+}
+
+/** Plugin-owned preload line. One non-comment line under `$DSH_HOME/rebooter/node-options`. */
+function readPluginNodeOptions(home) {
+  if (typeof home !== 'string' || home.trim().length === 0) return undefined
+  const raw = readText(join(home.trim(), STATE_DIR_NAME, 'node-options'))
+  if (typeof raw !== 'string') return undefined
+  for (const row of raw.split(/\r?\n/)) {
+    const line = row.trim()
+    if (line.length === 0 || line.startsWith('#')) continue
+    return line
+  }
+  return undefined
+}
+
+// Last-resort Windows user environment (not the system proxy). Preload
+// installers write NODE_OPTIONS here; some parents never copy that value.
+function readOsUserNodeOptions() {
+  if (process.platform !== 'win32') return undefined
+  let raw
+  try {
+    raw = execFileSync('reg', ['query', 'HKCU\\Environment', '/v', 'NODE_OPTIONS'], {
+      windowsHide: true,
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+  } catch {
+    return undefined
+  }
+  const line = decodeRegQuery(raw).split(/\r?\n/).find(row => /^\s*NODE_OPTIONS\s+REG_/.test(row))
+  if (line === undefined) return undefined
+  const value = line.replace(/^\s*NODE_OPTIONS\s+REG_\S+\s+/, '').trim()
+  return value.length > 0 ? value : undefined
+}
+
+function fillMissingNodeOptions(env, readOsUser = readOsUserNodeOptions) {
+  const current = env.NODE_OPTIONS
+  if (typeof current === 'string' && current.trim() !== '') return env
+  const fromPluginEnv = typeof env.DSH_NODE_OPTIONS === 'string' ? env.DSH_NODE_OPTIONS.trim() : ''
+  if (fromPluginEnv) {
+    env.NODE_OPTIONS = fromPluginEnv
+    return env
+  }
+  const fromFile = readPluginNodeOptions(env.DSH_HOME)
+  if (fromFile) {
+    env.NODE_OPTIONS = fromFile
+    return env
+  }
+  const fromOs = readOsUser()
+  if (typeof fromOs === 'string' && fromOs.trim() !== '') env.NODE_OPTIONS = fromOs.trim()
+  return env
+}
+
+function envForHost(layout, extra = {}, readOsUser = readOsUserNodeOptions) {
+  // Parent environment is copied, not interpreted. Proxy variables stay as the
+  // parent left them. A missing NODE_OPTIONS is filled from plugin-owned
+  // sources first, then (Windows only) the OS user environment. Never invent.
   const env = { ...process.env, ...extra }
   if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
     env.DSH_HOME = layout.dshHome.trim()
   }
-  return env
+  return fillMissingNodeOptions(env, readOsUser)
 }
 
 function envForOneShot(layout) {

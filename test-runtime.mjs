@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   beginJob, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
@@ -59,6 +59,22 @@ try {
   check('one-shot does not strip NODE_OPTIONS', oneShot.NODE_OPTIONS, '--require missing-on-purpose.cjs')
   if (previousHttps === undefined) delete process.env.HTTPS_PROXY
   else process.env.HTTPS_PROXY = previousHttps
+  delete process.env.NODE_OPTIONS
+  const restored = envForHost({ dshHome: home }, {}, () => '--require from-user.cjs')
+  check('missing NODE_OPTIONS is restored from the OS user environment', restored.NODE_OPTIONS, '--require from-user.cjs')
+  const parentWins = envForHost({ dshHome: home }, { NODE_OPTIONS: '--require parent.cjs' }, () => '--require from-user.cjs')
+  check('an explicit NODE_OPTIONS is not replaced', parentWins.NODE_OPTIONS, '--require parent.cjs')
+  const blank = envForHost({ dshHome: home }, {}, () => '  ')
+  check('a blank OS user NODE_OPTIONS stays absent', blank.NODE_OPTIONS, undefined)
+  writeFileSync(join(home, 'rebooter', 'node-options'), '# comment\n--require from-file.cjs\n', 'utf8')
+  const fromFile = envForHost({ dshHome: home }, {}, () => '--require from-user.cjs')
+  check('plugin node-options file wins over the OS user environment', fromFile.NODE_OPTIONS, '--require from-file.cjs')
+  const fromPluginEnv = envForHost(
+    { dshHome: home },
+    { DSH_NODE_OPTIONS: '--require from-env.cjs' },
+    () => '--require from-user.cjs',
+  )
+  check('DSH_NODE_OPTIONS wins over the plugin file', fromPluginEnv.NODE_OPTIONS, '--require from-env.cjs')
   if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS
   else process.env.NODE_OPTIONS = previousNodeOptions
 

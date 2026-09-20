@@ -34,7 +34,7 @@ Closing a terminal, Explorer, or the browser therefore does not end DSH. Only `s
 
 ## Outbound network
 
-This plugin does not read, strip, or set proxy variables or preloads. The environment of the process that starts it is copied onto the supervisor and the host. Following a system proxy (including turning it on after DSH is already up) is a separate program, not this package.
+This plugin does not read, strip, or set proxy variables. The environment of the process that starts it is copied onto the supervisor and the host. If that copy has no `NODE_OPTIONS`, the plugin fills it from its own sources first (`DSH_NODE_OPTIONS`, then `$DSH_HOME/rebooter/node-options`), and only on Windows falls back to a read of the user environment so an already-installed preload still loads when the parent dropped it. Following the system proxy, including a change after DSH is already up, remains that preload's job.
 
 ## Update means every plugin, after DSH is down
 

@@ -95,7 +95,7 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 node verify.mjs
 ```
 
-**8 suites, 176 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 182 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

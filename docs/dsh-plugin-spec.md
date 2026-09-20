@@ -163,7 +163,7 @@ Client 与 Host 的对话优先走：
 dsh plugin --profile web update --latest
 ```
 
-先关闭 DSH，再跑这条（profile 的 `node_modules` 正在被占用时 pnpm 会失败）。本插件不改写这次调用的环境变量；若有预加载钩子，钩子自己必须能让短进程正常退出。
+先关闭 DSH，再跑这条（profile 的 `node_modules` 正在被占用时 pnpm 会失败）。这次调用保留父进程已有的环境，不设置、不删除代理变量。仅当 `NODE_OPTIONS` 缺失时，先用插件自己的来源补（`DSH_NODE_OPTIONS`，或 `$DSH_HOME/rebooter/node-options`），Windows 上再只读用户环境作兜底，好让已经安装的预加载钩子生效。钩子自己必须能让短进程正常退出。
 
 状态与日志放在 `$DSH_HOME/rebooter/`，不放在某次 checkout 的 `.dsh-local/`（那是源码树私货，安装后的插件看不到）。
 
