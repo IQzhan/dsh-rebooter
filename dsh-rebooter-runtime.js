@@ -521,12 +521,36 @@ function panelLauncherBody(kind) {
   return script
 }
 
+function writePanelLaunchers(panelDir) {
+  mkdirSync(panelDir, { recursive: true })
+  const files = [
+    ['DSH-Server.vbs', panelLauncherBody('vbs'), null],
+    ['DSH-Server.sh', panelLauncherBody('desktop'), 0o755],
+  ]
+  const written = []
+  for (const [name, body, mode] of files) {
+    const entryPath = join(panelDir, name)
+    try {
+      writeText(entryPath, body)
+      if (mode !== null) chmodSync(entryPath, mode)
+    } catch (error) {
+      if (!existsSync(entryPath)) throw error
+    }
+    written.push(entryPath)
+  }
+  return written
+}
+
+function desktopCreatedMarker() {
+  return join(resolveHome(), STATE_DIR_NAME, 'desktop.created')
+}
+
 function packagePanelDir(cli = cliPathFromHost()) {
   return join(dirname(cli), '..', 'panel')
 }
 
 function writeWindowsShortcut(lnkPath, target, args, options = {}) {
-  // Helper stays beside the package entry, never on the Desktop.
+  // Helper stays in the plugin state directory, never on the Desktop.
   const dir = options.helperDir || dirname(target)
   mkdirSync(dir, { recursive: true })
   mkdirSync(dirname(lnkPath), { recursive: true })
@@ -636,76 +660,83 @@ function writePanelIcon(dir) {
   return path
 }
 
-/** Write the single DSH Server entry under package/panel and a Desktop shortcut. */
+/** Write panel launchers and, unless already recorded, a Desktop shortcut. */
 function installPanelEntry(node, cli, options = {}) {
   const panelDir = options.panelDir || packagePanelDir(cli)
-  mkdirSync(panelDir, { recursive: true })
-  const { kind, ext } = launcherNames()
-  const entryExt = kind === 'desktop' ? '.sh' : ext
-  const entryName = `DSH-Server${entryExt}`
+  const launchers = writePanelLaunchers(panelDir)
+  const { kind } = launcherNames()
+  const entryName = kind === 'vbs' ? 'DSH-Server.vbs' : 'DSH-Server.sh'
   const entryPath = join(panelDir, entryName)
-  writeText(entryPath, panelLauncherBody(kind))
-  if (kind === 'command' || kind === 'desktop') {
-    try { chmodSync(entryPath, 0o755) } catch { /* best-effort */ }
+
+  const installed = [...launchers]
+  const iconPath = writePanelIcon(panelDir)
+  const marker = desktopCreatedMarker()
+  const forceDesktop = options.forceDesktop === true
+  if (!forceDesktop && existsSync(marker)) return installed
+
+  const desk = options.desktopDir || desktopDir()
+  if (desk === undefined) return installed
+  removeShortcutHelpers(desk)
+  mkdirSync(desk, { recursive: true })
+  let shortcut = null
+  if (process.platform === 'win32') {
+    const lnk = join(desk, 'DSH Server.lnk')
+    const systemRoot = process.env.SystemRoot
+    if (typeof systemRoot === 'string' && systemRoot.length > 0) {
+      const scriptHost = join(systemRoot, 'System32', 'wscript.exe')
+      writeWindowsShortcut(lnk, scriptHost, `//B //nologo "${entryPath}"`, {
+        helperDir: dirname(marker),
+        workDir: dirname(panelDir),
+        windowStyle: 7,
+        iconPath,
+      })
+      shortcut = lnk
+    }
+  } else if (process.platform === 'darwin') {
+    // An .app runs the script without leaving Terminal open. A .command cannot.
+    const dest = join(desk, 'DSH Server.app')
+    const macos = join(dest, 'Contents', 'MacOS')
+    mkdirSync(macos, { recursive: true })
+    const bin = join(macos, 'DSH-Server')
+    writeText(bin, `#!/bin/sh\nexec /bin/sh ${JSON.stringify(entryPath)}\n`)
+    try { chmodSync(bin, 0o755) } catch { /* ignore */ }
+    writeText(join(dest, 'Contents', 'Info.plist'), [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0"><dict>',
+      '<key>CFBundleExecutable</key><string>DSH-Server</string>',
+      '<key>CFBundleIdentifier</key><string>app.dsh.server</string>',
+      '<key>CFBundleName</key><string>DSH Server</string>',
+      '<key>CFBundlePackageType</key><string>APPL</string>',
+      '</dict></plist>',
+      '',
+    ].join('\n'))
+    shortcut = dest
+  } else {
+    const dest = join(desk, 'DSH Server.desktop')
+    const pkg = dirname(panelDir)
+    const pngIcon = join(panelDir, 'dsh-server.png')
+    const lines = [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=DSH Server',
+      `Exec=${JSON.stringify(entryPath)}`,
+      `Path=${pkg}`,
+      'Terminal=false',
+    ]
+    if (existsSync(pngIcon)) lines.push(`Icon=${pngIcon}`)
+    lines.push('')
+    writeText(dest, lines.join('\n'))
+    try { chmodSync(dest, 0o755) } catch { /* ignore */ }
+    shortcut = dest
   }
 
-  const installed = [entryPath]
-  const iconPath = writePanelIcon(panelDir)
-  const desk = options.desktopDir || desktopDir()
-  if (desk !== undefined) {
-    removeShortcutHelpers(desk)
-    mkdirSync(desk, { recursive: true })
-    if (process.platform === 'win32') {
-      const lnk = join(desk, 'DSH Server.lnk')
-      const systemRoot = process.env.SystemRoot
-      if (typeof systemRoot === 'string' && systemRoot.length > 0) {
-        const scriptHost = join(systemRoot, 'System32', 'wscript.exe')
-        writeWindowsShortcut(lnk, scriptHost, `//B //nologo "${entryPath}"`, {
-          helperDir: panelDir,
-          workDir: dirname(panelDir),
-          windowStyle: 7,
-          iconPath,
-        })
-        installed.push(lnk)
-      }
-    } else if (process.platform === 'darwin') {
-      // An .app runs the script without leaving Terminal open. A .command cannot.
-      const dest = join(desk, 'DSH Server.app')
-      const macos = join(dest, 'Contents', 'MacOS')
-      mkdirSync(macos, { recursive: true })
-      const bin = join(macos, 'DSH-Server')
-      writeText(bin, `#!/bin/sh\nexec /bin/sh ${JSON.stringify(entryPath)}\n`)
-      try { chmodSync(bin, 0o755) } catch { /* ignore */ }
-      writeText(join(dest, 'Contents', 'Info.plist'), [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
-        '<plist version="1.0"><dict>',
-        '<key>CFBundleExecutable</key><string>DSH-Server</string>',
-        '<key>CFBundleIdentifier</key><string>app.dsh.server</string>',
-        '<key>CFBundleName</key><string>DSH Server</string>',
-        '<key>CFBundlePackageType</key><string>APPL</string>',
-        '</dict></plist>',
-        '',
-      ].join('\n'))
-      installed.push(dest)
-    } else {
-      const dest = join(desk, 'DSH Server.desktop')
-      const pkg = dirname(panelDir)
-      const pngIcon = join(panelDir, 'dsh-server.png')
-      const lines = [
-        '[Desktop Entry]',
-        'Type=Application',
-        'Name=DSH Server',
-        `Exec=${JSON.stringify(entryPath)}`,
-        `Path=${pkg}`,
-        'Terminal=false',
-      ]
-      if (existsSync(pngIcon)) lines.push(`Icon=${pngIcon}`)
-      lines.push('')
-      writeText(dest, lines.join('\n'))
-      try { chmodSync(dest, 0o755) } catch { /* ignore */ }
-      installed.push(dest)
-    }
+  if (shortcut !== null) {
+    installed.push(shortcut)
+    try {
+      ensureStateDir(statePaths())
+      writeText(marker, `${shortcut}\n`)
+    } catch { /* the shortcut exists; remembering it is best-effort */ }
   }
 
   // Remove legacy five-action desktop launchers and old single files.
@@ -1330,7 +1361,9 @@ export {
   appendJobLog,
   beginJob,
   cliPathFromHost,
+  desktopCreatedMarker,
   desktopDir,
+  writePanelLaunchers,
   dispatchCli,
   endJob,
   ensureStateDir,

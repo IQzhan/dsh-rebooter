@@ -27,7 +27,7 @@ function mountRebooter(ctx) {
     logSupervisor(paths, `supervisor adopt failed: ${error instanceof Error ? error.message : error}`)
   })
 
-  // Best-effort: write the DSH Server panel entry next to the package + Desktop.
+  // First mount only: write the Desktop shortcut once. Later mounts leave a deleted icon alone.
   try {
     const cli = cliPathFromHost()
     installPanelEntry(layout.node || process.execPath, cli)

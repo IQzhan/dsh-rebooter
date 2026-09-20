@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  beginJob, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
+  beginJob, desktopCreatedMarker, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
   killPid, launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout,
   performAction, pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, requestStopFiles,
   resolveHome, sendControl, sleep, spawnProcess, startControlServer, statePaths, writePanelPrefs,
@@ -117,6 +117,18 @@ try {
       && !existsSync(join(fakeDesktop, 'DSH-start.command'))
       && !existsSync(join(fakeDesktop, 'DSH-start.desktop')), true)
   check('legacy single DSH launcher is removed', existsSync(join(fakeDesktop, 'DSH.vbs')) || existsSync(join(fakeDesktop, 'DSH.cmd')), false)
+  const shortcutName = process.platform === 'win32'
+    ? 'DSH Server.lnk'
+    : process.platform === 'darwin' ? 'DSH Server.app' : 'DSH Server.desktop'
+  const shortcut = join(fakeDesktop, shortcutName)
+  check('first mount records that the shortcut was created', existsSync(desktopCreatedMarker()), true)
+  rmSync(shortcut, { recursive: true, force: true })
+  installPanelEntry(process.execPath, join(home, 'cli.cjs'), { panelDir, desktopDir: fakeDesktop })
+  check('a later mount does not recreate a deleted shortcut', existsSync(shortcut), false)
+  installPanelEntry(process.execPath, join(home, 'cli.cjs'), {
+    panelDir, desktopDir: fakeDesktop, forceDesktop: true,
+  })
+  check('an explicit desktop request puts the shortcut back', existsSync(shortcut), true)
 
   const prefs = writePanelPrefs(paths, { autoOpen: true, openApp: null })
   check('panel prefs round-trip autoOpen', readPanelPrefs(paths).autoOpen, true)

@@ -26,9 +26,10 @@ async function runCli(argv = process.argv) {
     const paths = ensureStateDir(statePaths())
     const layout = readLayout(paths) || captureLaunch(process)
     const cli = cliPathFromHost()
-    const installed = installPanelEntry(layout.node || process.execPath, cli)
-    if (installed === undefined || installed.length === 0) {
-      throw new Error('could not write panel entry (no package/panel or Desktop?)')
+    const installed = installPanelEntry(layout.node || process.execPath, cli, { forceDesktop: true })
+    const shortcuts = (installed || []).filter((item) => /[/\\]DSH Server\.(lnk|app|desktop)$/.test(item))
+    if (shortcuts.length === 0) {
+      throw new Error('could not write Desktop shortcut (no Desktop folder found)')
     }
     return { ok: true, action: 'desktop', paths: installed }
   }
@@ -51,7 +52,7 @@ function printCliHelp() {
     '  open              open the bound app or the browser at the DSH URL',
     '  panel             open the DSH Server status panel',
     '  app               open the DSH page in its own window',
-    '  desktop           write package/panel entry + Desktop "DSH Server" shortcut',
+    '  desktop           put DSH Server on the Desktop again',
   ]
   return lines.join('\n')
 }

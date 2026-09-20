@@ -113,11 +113,11 @@ a fake terminal on the idle home screen.
 
 ## Desktop entry
 
-After install (Host mount once, and/or `dsh-rebooter desktop`):
+After install, the first Host mount writes a Desktop shortcut named **`DSH Server`**. A later mount does not write it again, even if the icon was deleted. `dsh-rebooter desktop` and the panel button **Put on Desktop** write it again.
 
-1. Write a relocatable entry under **`<installed-package>/panel/`** (next to `lib/cli.cjs`). It finds `node` on `PATH` and `lib/cli.cjs` from its own folder. No machine path is stored in that file.
-2. Write a Desktop shortcut named **`DSH Server`**. The shortcut is the only file that records where the package is installed, and Host mount rewrites it. Its icon is `panel/dsh-server.ico` (the official DeepSeek mark on a tile), never the `.vbs`. The DSH page window uses `dsh.ico`.
-3. Remove legacy five-file launchers and any leftover `_dsh-mkshortcut*.vbs` on the Desktop.
+1. The relocatable entry ships in **`<installed-package>/panel/`** (`DSH-Server.vbs` and `DSH-Server.sh`). It finds `node` on `PATH` and `lib/cli.cjs` from its own folder. No machine path is stored in that file.
+2. The Desktop shortcut is the only file that records where the package is installed. Its icon is `panel/dsh-server.ico` (the official DeepSeek mark on a tile), never the `.vbs`. The DSH page window uses `dsh.ico`. A marker under `$DSH_HOME/rebooter/` remembers that the shortcut was created.
+3. The first successful write also removes legacy five-file launchers and any leftover `_dsh-mkshortcut*.vbs` on the Desktop.
 
 The window host (`@webviewjs/webview`) is a dependency of the installable package. `node build-rebooter.mjs` installs it inside `package/node_modules` for the current OS, so a linked or copied package can open the window without the source checkout.
 
@@ -138,7 +138,7 @@ only. It does not signal DSH, and it does not stop the panel HTTP process.
 
 ```
 dsh-rebooter panel          # ensure panel HTTP + show window
-dsh-rebooter desktop        # (re)write package/panel entry + Desktop shortcut
+dsh-rebooter desktop        # put the Desktop shortcut back
 dsh-rebooter start|stop|…   # unchanged, plus job.* updates; open respects prefs
 dsh-rebooter update         # new
 dsh-rebooter open           # new
@@ -149,7 +149,7 @@ dsh-rebooter open           # new
 - Host `POST /action` (menu actions): `dispatchCli` as today, then
   `ensurePanelVisible()` so progress appears even if the user never opened
   the panel.
-- Host mount: best-effort `installPanelEntry` once (idempotent).
+- Host mount: `installPanelEntry` creates the Desktop shortcut only when `$DSH_HOME/rebooter/desktop.created` is absent. `desktop` and `POST /api/desktop` pass `forceDesktop`.
 - Client: no sidebar control. The menu is the power button on the page window.
 
 ## Decoupling checklist

@@ -34,6 +34,7 @@ try {
   check('panel html is a full document', html.includes('<!DOCTYPE html>') && html.includes('DSH Server'), true)
   check('panel html has a custom draggable frame',
     html.includes('id="titlebar"') && html.includes('id="btnMin"') && html.includes('id="btnClose"') && !html.includes('id="btnMax"') && html.includes("post('d0:") && html.includes('data-ds-dark-theme') && html.includes('navigator.languages'), true)
+  check('panel offers a button to put the shortcut on the Desktop', html.includes('id="btnDesktop"'), true)
   check('binding a program does not use window.prompt', html.includes('id="bindPath"') && html.includes('id="btnBrowse"') && !html.includes('prompt('), true)
 
   writePanelPrefs(paths, { autoOpen: false, openApp: null })

@@ -18,6 +18,7 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { writePanelLaunchers } from './dsh-rebooter-runtime.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_NAME = 'dsh-rebooter'
@@ -188,6 +189,8 @@ const manifest = {
     'panel/dsh-server.ico',
     'panel/dsh-server.png',
     'panel/dsh-server.rgba',
+    'panel/DSH-Server.vbs',
+    'panel/DSH-Server.sh',
     'README.md',
   ],
   repository: {
@@ -225,6 +228,7 @@ await rm(join(OUT_PACKAGE, 'lib'), { recursive: true, force: true })
 await rm(join(OUT_PACKAGE, 'cordis.patch.yml'), { force: true })
 await mkdir(join(OUT_PACKAGE, 'lib'), { recursive: true })
 await mkdir(join(OUT_PACKAGE, 'panel'), { recursive: true })
+writePanelLaunchers(join(OUT_PACKAGE, 'panel'))
 await writeFile(join(OUT_PACKAGE, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'README.md'), [
   '# dsh-rebooter',
@@ -237,6 +241,15 @@ await writeFile(join(OUT_PACKAGE, 'README.md'), [
   '',
   'Then restart `dsh web`. Requires Node 24 or newer.',
   '',
+  'The desktop shortcut is created the first time DSH starts. Open the panel, or put the shortcut back:',
+  '',
+  '```bash',
+  'npx --yes dsh-rebooter panel',
+  'npx --yes dsh-rebooter desktop',
+  '```',
+  '',
+  'The panel button **Put on Desktop** does the same as the desktop command.',
+  '',
   '轻量插件。默认打开的页面是独立窗口，不依赖浏览器。',
   '',
   '```bash',
@@ -245,15 +258,26 @@ await writeFile(join(OUT_PACKAGE, 'README.md'), [
   '',
   '然后重启 `dsh web`。需要 Node 24 或更高版本。',
   '',
+  '桌面快捷方式只在第一次启动 DSH 时创建。打开面板，或把快捷方式放回桌面：',
+  '',
+  '```bash',
+  'npx --yes dsh-rebooter panel',
+  'npx --yes dsh-rebooter desktop',
+  '```',
+  '',
+  '面板上的「放到桌面」和上面的 desktop 命令是同一件事。',
+  '',
 ].join('\n'), 'utf8')
 await writeFile(join(OUT_PACKAGE, 'cordis.patch.yml'), bundlePatch, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'index.cjs'), `${hostModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'client.cjs'), `${clientModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'cli.cjs'), `${cliModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
-  'DSH Server panel entry files are written here by:',
-  '  node lib/cli.cjs desktop',
-  'or automatically when the Host plugin mounts.',
+  'DSH-Server.vbs and DSH-Server.sh ship with the package.',
+  'The Desktop shortcut is created the first time the Host mounts.',
+  'Put it back with: npx --yes dsh-rebooter desktop',
+  'or the Put on Desktop button in the panel.',
+  'Open the panel with: npx --yes dsh-rebooter panel',
   '',
 ].join('\n'), 'utf8')
 

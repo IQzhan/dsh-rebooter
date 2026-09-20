@@ -43,4 +43,4 @@
 
 ## 生成入口
 
-`dsh-rebooter desktop` 与 Host 挂载时写入。入口在已安装插件的 `panel/` 里，用自身位置找到 `lib/cli.cjs`，不写死本机路径。桌面入口名为 **DSH Server**：Windows 快捷方式图标是内嵌官方 DeepSeek 标志的 `dsh-server.ico`，Linux 用 `dsh-server.png`，macOS 是 `.app`（不留终端）。窗口组件起不来时，DSH Server 和 DSH 页面改由系统默认方式打开。文案只有 `zh` / `en` 两套，匹配方式与 DSH 相同。写快捷方式的临时文件不放在桌面。窗口宿主装在插件自己的 `node_modules` 里，需要 `Node 24`。换机器执行构建即可。
+`dsh-rebooter desktop` 以及面板上的「放到桌面」会重新写桌面快捷方式。入口文件 `DSH-Server.vbs` 和 `DSH-Server.sh` 随包装发布，用自身位置找到 `lib/cli.cjs`，不写死本机路径。桌面快捷方式只在第一次 Host 挂载成功时创建；删掉后不会因为再次启动而回来。桌面入口名为 **DSH Server**：Windows 快捷方式图标是内嵌官方 DeepSeek 标志的 `dsh-server.ico`，Linux 用 `dsh-server.png`，macOS 是 `.app`（不留终端）。窗口组件起不来时，DSH Server 和 DSH 页面改由系统默认方式打开。文案只有 `zh` / `en` 两套，匹配方式与 DSH 相同。写快捷方式的临时文件不放在桌面。窗口宿主装在插件自己的 `node_modules` 里，需要 `Node 24`。换机器执行构建即可。

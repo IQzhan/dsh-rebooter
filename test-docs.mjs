@@ -40,6 +40,10 @@ for (const command of [
   'node verify.mjs',
   'dsh plugin --profile web add ./package',
   'dsh plugin --profile web update --latest',
+  'dsh plugin --profile web add dsh-rebooter',
+  'npx --yes dsh-rebooter panel',
+  'npx --yes dsh-rebooter desktop',
+  'node publish-via-actions.mjs 1.0.1',
 ]) {
   check(`both languages document \`${command}\``, [en.includes(command), zh.includes(command)], [true, true])
 }

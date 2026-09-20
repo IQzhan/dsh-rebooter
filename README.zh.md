@@ -16,7 +16,7 @@
 
 ![桌面上的 DSH Server](docs/images/desktop.png)
 
-双击打开面板。
+双击打开面板。图标只在这个插件第一次随 DSH 启动时创建。删掉之后，下次启动不会自动放回来。用面板上的「放到桌面」，或安装一节里的 desktop 命令再放一次。没有图标时，用安装一节里的 panel 命令打开面板。
 
 ![服务未运行](docs/images/panel-stopped.png)
 
@@ -49,22 +49,42 @@
 
 ## 安装
 
+直接从 npm 安装，然后重启 `dsh web`。
+
+```bash
+dsh plugin --profile web add dsh-rebooter
+```
+
+桌面快捷方式只在第一次启动 DSH 时创建。随时打开面板，或把快捷方式放回桌面：
+
+```bash
+npx --yes dsh-rebooter panel
+```
+
+```bash
+npx --yes dsh-rebooter desktop
+```
+
+面板上的「放到桌面」和 desktop 命令是同一件事。需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，DSH Server 和 DSH 页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。「打开界面」在独立窗口里打开这个页面。若已绑定程序，仍打开该程序。
+
+在本仓库里开发，继续用本地链接，不要用 npm 上的包盖掉它。先构建，再把 profile 指到 `./package`。这里打开面板、放回快捷方式，用下面的本地命令，不要用 `npx`（那会跑已发布的包）。
+
 ```bash
 node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-需要 `Node 24` 或更高版本。面板窗口使用系统网页组件：Windows 为 `WebView2`，macOS 为系统 WebKit，Linux 为 `WebKitGTK`。组件缺失时，DSH Server 和 DSH 页面改由系统默认方式打开。面板文案跟随界面语言（`zh` 或 `en`）。「打开界面」在独立窗口里打开这个页面。若已绑定程序，仍打开该程序。
-
-然后重启 `dsh web`。Host 挂载时也会尽力写入面板入口。也可手动：
+```bash
+node package/lib/cli.cjs panel
+```
 
 ```bash
 node package/lib/cli.cjs desktop
 ```
 
-会在 `package/panel/` 写入系统入口，并在桌面生成名为 **DSH Server** 的快捷方式。随时可用 `node package/lib/cli.cjs panel` 打开面板。
-
 ## 更新 / 卸载
+
+npm 安装之后，用 `dsh plugin --profile web update dsh-rebooter` 更新本插件，再重启 `dsh web`。在本仓库里改代码，则重新构建本地链接：
 
 ```bash
 git pull && node build-rebooter.mjs
@@ -76,7 +96,11 @@ git pull && node build-rebooter.mjs
 
 ## 发布新版本
 
-在 GitHub 打开 Actions，运行 `publish.yml`，填一个比 npm 上更高的版本号，例如 `1.0.1`。构建、测试和发布都在 GitHub 上完成，本机不用再确认 Windows Hello。
+```bash
+node publish-via-actions.mjs 1.0.1
+```
+
+这会在 GitHub 上启动 `publish.yml`，并等到跑完。版本号要比 npm 上的更高。也可以自己打开 Actions 手动跑 `publish.yml`。
 
 第一次使用前，到 npm 这个包的设置里添加 Trusted Publisher：用户 `IQzhan`，仓库 `dsh-rebooter`，工作流文件名 `publish.yml`，并允许直接 `npm publish`。
 
@@ -101,7 +125,7 @@ git pull && node build-rebooter.mjs
 node verify.mjs
 ```
 
-**8 个套件、182 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**8 个套件、194 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 

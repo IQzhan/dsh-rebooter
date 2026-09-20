@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { ROOT } from './test-support.mjs'
+import { cleanup, ROOT, scratch } from './test-support.mjs'
 
 const results = []
 function check(label, actual, expected) {
@@ -89,6 +91,58 @@ check('client leaves the page untouched', registered.length, 0)
 
 const patch = readFileSync(join(ROOT, 'package', 'cordis.patch.yml'), 'utf8')
 check('patch inserts this package by name', /name: dsh-rebooter/.test(patch), true)
+
+function packedFiles(dir, base = dir) {
+  const found = []
+  for (const name of readdirSync(dir)) {
+    const abs = join(dir, name)
+    if (statSync(abs).isDirectory()) found.push(...packedFiles(abs, base))
+    else found.push(abs.slice(base.length + 1).replaceAll('\\', '/'))
+  }
+  return found.sort()
+}
+
+const built = join(ROOT, 'package')
+check('built package ships the Windows launcher', existsSync(join(built, 'panel', 'DSH-Server.vbs')), true)
+check('built package ships the macOS and Linux launcher', existsSync(join(built, 'panel', 'DSH-Server.sh')), true)
+
+const packedDir = scratch('npm-pack-')
+try {
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const run = spawnSync(npm, ['pack', '--json', '--pack-destination', packedDir], {
+    cwd: built,
+    encoding: 'utf8',
+    shell: process.platform === 'win32',
+  })
+  check('npm pack of the built package succeeds', run.status, 0)
+  let same = 'npm pack produced no file list'
+  if (run.status === 0) {
+    const info = JSON.parse(run.stdout)
+    const extract = join(packedDir, 'extract')
+    mkdirSync(extract)
+    const tar = spawnSync('tar', ['-xf', join(packedDir, info[0].filename), '-C', extract], { encoding: 'utf8' })
+    if (tar.status !== 0) {
+      same = tar.stderr || 'tar extract failed'
+    } else {
+      const root = join(extract, 'package')
+      const files = packedFiles(root)
+      const mismatches = []
+      if (files.some(name => name.startsWith('node_modules/'))) mismatches.push('node_modules was published')
+      for (const name of ['panel/DSH-Server.vbs', 'panel/DSH-Server.sh', 'lib/cli.cjs', 'lib/index.cjs']) {
+        if (!files.includes(name)) mismatches.push(`missing ${name}`)
+      }
+      for (const name of files) {
+        const published = createHash('sha256').update(readFileSync(join(root, name))).digest('hex')
+        const local = createHash('sha256').update(readFileSync(join(built, name))).digest('hex')
+        if (published !== local) mismatches.push(name)
+      }
+      same = mismatches.length === 0 ? 'same' : mismatches.join(', ')
+    }
+  }
+  check('published tarball matches the local built package', same, 'same')
+} finally {
+  cleanup(packedDir)
+}
 
 const failed = results.filter(result => !result.ok)
 for (const result of results) {

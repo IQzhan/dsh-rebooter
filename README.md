@@ -16,7 +16,7 @@ The separate window needs the OS web component: WebView2 on Windows, the built-i
 
 ![Desktop entry named DSH Server](docs/images/desktop.png)
 
-Double-click this icon to open the panel.
+Double-click this icon to open the panel. It is created only the first time this plugin starts with DSH. If you delete it, the next start does not put it back. Use **Put on Desktop** on the panel, or the desktop command in Install. Without the icon, the panel command in Install still opens it.
 
 ![Panel while the service is stopped](docs/images/panel-stopped_en.png)
 
@@ -49,22 +49,42 @@ A detached Node supervisor keeps DSH alive after start: an unexpected host exit 
 
 ## Install
 
+Anyone can install it from npm. Then restart `dsh web`.
+
+```bash
+dsh plugin --profile web add dsh-rebooter
+```
+
+The desktop shortcut is created the first time DSH starts. Open the panel anytime, or put the shortcut back on the Desktop:
+
+```bash
+npx --yes dsh-rebooter panel
+```
+
+```bash
+npx --yes dsh-rebooter desktop
+```
+
+The panel button **Put on Desktop** does the same as the desktop command. Requires `Node 24` or newer. The panel window uses the OS web view: `WebView2` on Windows, system WebKit on macOS, `WebKitGTK` on Linux. If that runtime is missing, DSH Server and the DSH page open with the default URL handler. The panel follows the UI language (`zh` or `en`). Open UI opens that page in its own window. A bound program, if set, still opens instead.
+
+Working on this repository keeps the local link. Build, then point the profile at `./package`. Do not install the npm copy over that link. Here, open the panel and put the shortcut back with the local commands, not `npx` (that runs the published package).
+
 ```bash
 node build-rebooter.mjs
 dsh plugin --profile web add ./package
 ```
 
-Requires `Node 24` or newer. The panel window uses the OS web view: `WebView2` on Windows, system WebKit on macOS, `WebKitGTK` on Linux. If that runtime is missing, DSH Server and the DSH page open with the default URL handler. The panel follows the UI language (`zh` or `en`). Open UI opens that page in its own window. A bound program, if set, still opens instead.
-
-Then restart `dsh web`. Host mount also tries to write the panel entry. To (re)write it by hand:
+```bash
+node package/lib/cli.cjs panel
+```
 
 ```bash
 node package/lib/cli.cjs desktop
 ```
 
-That writes `package/panel/` entry files and a Desktop shortcut named **DSH Server**. Double-click it to open the status panel. Open the panel anytime with `node package/lib/cli.cjs panel`.
-
 ## Update / uninstall
+
+After an npm install, update this plugin with `dsh plugin --profile web update dsh-rebooter`, then restart `dsh web`. In this repository, rebuild the linked package instead:
 
 ```bash
 git pull && node build-rebooter.mjs
@@ -76,7 +96,11 @@ The in-app Update actions run `dsh plugin --profile web update --latest`, which 
 
 ## Publish a version
 
-On GitHub, open Actions and run `publish.yml`. Enter a version higher than the one on npm, such as `1.0.1`. The build, tests, and publish run on GitHub, so this machine does not ask for Windows Hello again.
+```bash
+node publish-via-actions.mjs 1.0.1
+```
+
+That starts `publish.yml` on GitHub and waits until it finishes. Use a version higher than the one on npm. You can also open Actions and run `publish.yml` by hand.
 
 Before the first run, add a Trusted Publisher on the npm package settings: user `IQzhan`, repository `dsh-rebooter`, workflow filename `publish.yml`, and allow a direct `npm publish`.
 
@@ -101,7 +125,7 @@ Before the first run, add a Trusted Publisher on the npm package settings: user 
 node verify.mjs
 ```
 
-**8 suites, 182 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 194 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

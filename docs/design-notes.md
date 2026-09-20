@@ -51,7 +51,7 @@ There is no `git pull` of the harness checkout and no overlay dance. Those belon
 ## Start from the desktop
 
 ```
-node package/lib/cli.cjs desktop
+npx --yes dsh-rebooter desktop
 ```
 
-Writes the OS-specific **DSH Server** entry under `package/panel/` and a Desktop shortcut named **DSH Server**. Double-click opens the status panel (`dsh-rebooter panel`). Paths are machine-local; the plugin source never embeds a Desktop path.
+Puts **DSH Server** back on the Desktop. The shortcut is also created the first time the Host mounts, and not again after that. Double-click opens the status panel (`dsh-rebooter panel`). The shortcut is the only install-time absolute pointer; the plugin source never embeds a Desktop path.

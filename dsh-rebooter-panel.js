@@ -14,7 +14,7 @@ import {
   DEFAULT_HOST, DEFAULT_PORT, availableActions, captureLaunch, panelPort,
 } from './dsh-rebooter-core.js'
 import {
-  cliPathFromHost, ensureStateDir, isWebListening,
+  cliPathFromHost, ensureStateDir, installPanelEntry, isWebListening,
   logSupervisor, openDshUi, openUrl, performAction, readJob, readLayout,
   readPanelPrefs, readText, readWebUrl, spawnDetached, statePaths, writePanelPrefs,
 } from './dsh-rebooter-runtime.js'
@@ -214,6 +214,7 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
     <button type="button" class="iconbtn" id="btnGear" title="Bind a program">${iconGear()}</button>
     <button type="button" class="iconbtn hidden" id="btnClearApp" title="Clear binding">${iconClear()}</button>
     <label><input type="checkbox" id="autoOpen"/> <span id="autoOpenLabel">Open UI when DSH starts</span></label>
+    <button type="button" id="btnDesktop">Put on Desktop</button>
   </div>
   <div class="bind-row hidden" id="bindRow">
     <input id="bindPath" type="text" spellcheck="false" placeholder="Program path, or browse"/>
@@ -284,6 +285,8 @@ const COPY = {
     'stop': '关闭服务',
     'restart': '重启服务',
     'update-stop': '更新并关闭服务',
+    'desktop': '放到桌面',
+    'desktopDone': '已放到桌面',
   },
   en: {
     'min': 'Minimize',
@@ -309,8 +312,11 @@ const COPY = {
     'stop': 'Stop service',
     'restart': 'Restart service',
     'update-stop': 'Update and stop service',
+    'desktop': 'Put on Desktop',
+    'desktopDone': 'Shortcut is on the Desktop',
   },
 }
+  let desktopNoteUntil = 0;
   let lang = localeId();
   let t = COPY[lang] || COPY.en;
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
@@ -402,6 +408,7 @@ const COPY = {
     let text = '';
     if (busy) text = job.action ? labelFor(job.action, s.running === true) : t.working;
     else if (err) text = t.failed;
+    else if (Date.now() < desktopNoteUntil) text = t.desktopDone;
     else if (s.running) text = t.running;
     else text = t.stopped;
     statusText.textContent = text;
@@ -491,6 +498,10 @@ const COPY = {
     void postJson('/api/prefs', p);
   }
   $('btnOpen').onclick = () => void postJson('/api/open', {});
+  $('btnDesktop').onclick = async () => {
+    const result = await postJson('/api/desktop', {});
+    if (result.ok && result.data && result.data.ok) desktopNoteUntil = Date.now() + 4000;
+  };
   autoOpen.onchange = () => {
     const p = lastSnapshot && lastSnapshot.prefs ? { ...lastSnapshot.prefs } : {};
     p.autoOpen = autoOpen.checked;
@@ -530,6 +541,7 @@ const COPY = {
     $('btnClose').title = t.close;
     $('btnClose').setAttribute('aria-label', t.close);
     $('btnOpen').textContent = t.open;
+    $('btnDesktop').textContent = t.desktop;
     btnGear.title = t.bind;
     btnClearApp.title = t.clear;
     $('autoOpenLabel').textContent = t.autoOpen;
@@ -664,6 +676,17 @@ function startPanelServer(paths, layout, options = {}) {
             : (body.openApp !== undefined ? body.openApp : cur.openApp),
         })
         sendJson(res, 200, { ok: true, prefs })
+        return
+      }
+      if (req.method === 'POST' && path === '/api/desktop') {
+        const cli = cliPathFromHost()
+        const installed = installPanelEntry(layout.node || process.execPath, cli, { forceDesktop: true })
+        const shortcut = installed.find((item) => /[/\\]DSH Server\.(lnk|app|desktop)$/.test(item))
+        if (!shortcut) {
+          sendJson(res, 500, { ok: false, error: 'no Desktop folder found' })
+          return
+        }
+        sendJson(res, 200, { ok: true, path: shortcut })
         return
       }
       if (req.method === 'POST' && path === '/api/open') {
