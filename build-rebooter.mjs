@@ -21,7 +21,7 @@ import { spawnSync } from 'node:child_process'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const PLUGIN_NAME = 'dsh-rebooter'
-const VERSION = '1.0.0'
+const VERSION = process.env.DSH_REBOOTER_VERSION || '1.0.0'
 const LINK_TYPE = process.platform === 'win32' ? 'junction' : 'dir'
 const OUT_PACKAGE = join(here, 'package')
 
@@ -168,8 +168,7 @@ const clientModule = [
 const manifest = {
   name: PLUGIN_NAME,
   version: VERSION,
-  private: true,
-  description: 'Start, stop, restart, and update DeepSeek Harness (including every profile plugin) from the page window or the desktop.',
+  description: 'Lightweight DeepSeek Harness plugin. The default page opens in its own window and does not need a browser. Start, stop, restart, and update from a desktop panel. Closing either window does not stop the service.',
   type: 'commonjs',
   main: './lib/index.cjs',
   bin: { 'dsh-rebooter': './lib/cli.cjs' },
@@ -178,6 +177,22 @@ const manifest = {
     './client': { default: './lib/client.cjs' },
     './cli': { default: './lib/cli.cjs' },
     './package.json': './package.json',
+  },
+  files: [
+    'lib',
+    'cordis.patch.yml',
+    'panel/README.txt',
+    'panel/dsh.ico',
+    'panel/dsh.png',
+    'panel/dsh.rgba',
+    'panel/dsh-server.ico',
+    'panel/dsh-server.png',
+    'panel/dsh-server.rgba',
+    'README.md',
+  ],
+  repository: {
+    type: 'git',
+    url: 'git+https://github.com/IQzhan/dsh-rebooter.git',
   },
   dsh: {
     bundle: { patch: './cordis.patch.yml' },
@@ -211,6 +226,26 @@ await rm(join(OUT_PACKAGE, 'cordis.patch.yml'), { force: true })
 await mkdir(join(OUT_PACKAGE, 'lib'), { recursive: true })
 await mkdir(join(OUT_PACKAGE, 'panel'), { recursive: true })
 await writeFile(join(OUT_PACKAGE, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+await writeFile(join(OUT_PACKAGE, 'README.md'), [
+  '# dsh-rebooter',
+  '',
+  'Lightweight DeepSeek Harness plugin. The default page opens in its own window and does not need a browser.',
+  '',
+  '```bash',
+  'dsh plugin --profile web add dsh-rebooter',
+  '```',
+  '',
+  'Then restart `dsh web`. Requires Node 24 or newer.',
+  '',
+  '轻量插件。默认打开的页面是独立窗口，不依赖浏览器。',
+  '',
+  '```bash',
+  'dsh plugin --profile web add dsh-rebooter',
+  '```',
+  '',
+  '然后重启 `dsh web`。需要 Node 24 或更高版本。',
+  '',
+].join('\n'), 'utf8')
 await writeFile(join(OUT_PACKAGE, 'cordis.patch.yml'), bundlePatch, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'index.cjs'), `${hostModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'client.cjs'), `${clientModule}\n`, 'utf8')

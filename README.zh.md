@@ -74,6 +74,12 @@ git pull && node build-rebooter.mjs
 
 菜单里的「更新」跑的是 `dsh plugin --profile web update --latest`，会更新**所有**已装插件，不只是本包。
 
+## 发布新版本
+
+在 GitHub 打开 Actions，运行 `publish.yml`，填一个比 npm 上更高的版本号，例如 `1.0.1`。构建、测试和发布都在 GitHub 上完成，本机不用再确认 Windows Hello。
+
+第一次使用前，到 npm 这个包的设置里添加 Trusted Publisher：用户 `IQzhan`，仓库 `dsh-rebooter`，工作流文件名 `publish.yml`，并允许直接 `npm publish`。
+
 ## 目录结构
 
 | 文件 | 作用 |

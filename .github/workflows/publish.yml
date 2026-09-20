@@ -1,0 +1,60 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: npm version to publish, such as 1.0.1
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+
+      - name: Require a newer semver
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node --input-type=module <<'EOF'
+          import { execSync } from 'node:child_process'
+          const version = process.env.VERSION ?? ''
+          if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) {
+            console.error('version must look like 1.0.1')
+            process.exit(1)
+          }
+          let current = '0.0.0'
+          try {
+            current = execSync('npm view dsh-rebooter version', { encoding: 'utf8' }).trim()
+          } catch {
+            current = '0.0.0'
+          }
+          const newer = version.localeCompare(current, undefined, { numeric: true }) > 0
+          if (!newer) {
+            console.error(`version must be greater than ${current}`)
+            process.exit(1)
+          }
+          console.log(`publishing ${version}`)
+          EOF
+
+      - run: node run-tests.mjs
+
+      - run: node build-rebooter.mjs
+        env:
+          DSH_REBOOTER_VERSION: ${{ inputs.version }}
+
+      - name: Publish
+        working-directory: package
+        run: npm publish

@@ -74,6 +74,12 @@ Uninstall: `dsh plugin --profile web remove dsh-rebooter`. State lives in `$DSH_
 
 The in-app Update actions run `dsh plugin --profile web update --latest`, which updates **every** installed plugin, not only this one.
 
+## Publish a version
+
+On GitHub, open Actions and run `publish.yml`. Enter a version higher than the one on npm, such as `1.0.1`. The build, tests, and publish run on GitHub, so this machine does not ask for Windows Hello again.
+
+Before the first run, add a Trusted Publisher on the npm package settings: user `IQzhan`, repository `dsh-rebooter`, workflow filename `publish.yml`, and allow a direct `npm publish`.
+
 ## Layout
 
 | File | Role |
