@@ -17,12 +17,10 @@ if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version || '')) {
 
 const TIMEOUT_MS = Number(process.env.DSH_PUBLISH_TIMEOUT_MS) || 20 * 60 * 1000
 const POLL_MS = 10_000
-const shell = process.platform === 'win32'
 
 function gh(args, options = {}) {
   const run = spawnSync('gh', args, {
     encoding: 'utf8',
-    shell,
     stdio: options.inherit ? 'inherit' : ['ignore', 'pipe', 'pipe'],
   })
   if (run.status !== 0) {
@@ -33,9 +31,10 @@ function gh(args, options = {}) {
 }
 
 function npmViewVersion() {
-  const run = spawnSync('npm', ['view', 'dsh-rebooter', 'version'], {
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+  const run = spawnSync(npm, ['view', 'dsh-rebooter', 'version'], {
     encoding: 'utf8',
-    shell,
+    shell: process.platform === 'win32',
   })
   return run.status === 0 ? (run.stdout || '').trim() : ''
 }

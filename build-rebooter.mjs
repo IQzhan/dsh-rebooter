@@ -288,7 +288,7 @@ for (const name of iconNames) {
 }
 
 const hostInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', '@webviewjs', 'webview'))
-if (!hostInstalled) {
+if (!hostInstalled && process.env.DSH_REBOOTER_SKIP_WEBVIEW !== '1') {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
   const installed = spawnSync(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
     cwd: OUT_PACKAGE,

@@ -49,11 +49,12 @@ jobs:
           console.log(`publishing ${version}`)
           EOF
 
-      - run: node run-tests.mjs
-
       - run: node build-rebooter.mjs
         env:
           DSH_REBOOTER_VERSION: ${{ inputs.version }}
+          DSH_REBOOTER_SKIP_WEBVIEW: '1'
+
+      - run: node run-tests.mjs
 
       - name: Publish
         working-directory: package
