@@ -109,7 +109,7 @@ body[data-ds-dark-theme] {
   --log: rgb(27, 27, 28);
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { background: var(--bg); color: var(--text); font: 14px/22px var(--font); height: auto; }
+html, body { background: var(--bg); color: var(--text); font: 14px/22px var(--font); height: auto; overflow: hidden; }
 #fit { background: var(--bg); }
 .titlebar {
   display: flex; align-items: center; justify-content: space-between;
@@ -342,13 +342,19 @@ const COPY = {
   function fitWindow() {
     const box = document.getElementById('fit');
     if (!box) return;
-    const height = Math.ceil(box.getBoundingClientRect().height);
+    const height = Math.ceil(box.scrollHeight);
     const width = 440;
     if (height < 80) return;
     const key = width + 'x' + height;
     if (key === lastFit) return;
     lastFit = key;
-    void postJson('/api/frame', { op: 'resize', width, height });
+    void postJson('/api/frame', { op: 'resize', width, height }).then((result) => {
+      if (!result || result.ok !== true) lastFit = '';
+    });
+  }
+  const fitTarget = document.getElementById('fit');
+  if (fitTarget && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => fitWindow()).observe(fitTarget);
   }
 
   const titlebar = $('titlebar');
@@ -713,8 +719,8 @@ function startPanelServer(paths, layout, options = {}) {
       }
       if (req.method === 'POST' && path === '/api/frame') {
         const body = await readRequestBody(req)
-        if (body?.op === 'show' && !frameWindow()) {
-          const shown = await showFrameless(`http://${host}:${port}/`, paths)
+        if (body?.op === 'show') {
+          const shown = revealFrame() || await showFrameless(`http://${host}:${port}/`, paths)
           sendJson(res, 200, { ok: true, shown })
           return
         }
@@ -780,6 +786,22 @@ function pushAppAppearance(appearance) {
 }
 let sharedApp = null
 let pumpStarted = false
+
+function windowHostDied(error) {
+  const message = error instanceof Error ? error.message : String(error || '')
+  return message.includes('has been disposed')
+}
+
+function dropWindowHost() {
+  const dying = sharedApp
+  sharedApp = null
+  pumpStarted = false
+  frameHost = null
+  appHost = null
+  try {
+    if (dying && typeof dying.stop === 'function') dying.stop()
+  } catch { /* the pump has already stopped */ }
+}
 
 function frameWindow() {
   const shell = frameHost?.window
@@ -853,7 +875,8 @@ function revealFrame() {
     shell.show()
     shell.focus()
     return true
-  } catch {
+  } catch (error) {
+    if (windowHostDied(error)) dropWindowHost()
     return false
   }
 }
@@ -872,7 +895,15 @@ function applyFrameOp(body) {
   if (op === 'resize') {
     const width = Math.max(320, Math.min(800, Number(body.width) || 440))
     const height = Math.max(160, Math.min(720, Number(body.height) || 280))
-    try { shell.setSize(width, height, true) } catch { shell.setSize(width, height) }
+    const apply = (w, h) => {
+      try { shell.setSize(w, h, true) } catch { shell.setSize(w, h) }
+    }
+    apply(width, height)
+    try {
+      const inner = typeof shell.getInnerSize === 'function' ? shell.getInnerSize(true) : null
+      const innerHeight = Number(inner?.height) || 0
+      if (innerHeight > 0 && innerHeight < height) apply(width, height + (height - innerHeight))
+    } catch { /* the first size already matches the page */ }
     return { ok: true }
   }
   if (op === 'minimize') {
@@ -937,9 +968,29 @@ async function ensureSharedApp(paths) {
     sharedApp = new Application()
   } catch (error) {
     logSupervisor(paths, `window host: ${error instanceof Error ? error.message : error}`)
+    sharedApp = null
     return null
   }
   return sharedApp
+}
+
+async function openShell(paths, options, label) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const app = await ensureSharedApp(paths)
+    if (!app) return null
+    try {
+      return { app, shell: app.createBrowserWindow(options) }
+    } catch (error) {
+      logSupervisor(paths, `${label}: ${error instanceof Error ? error.message : error}`)
+      if (attempt === 0 && windowHostDied(error)) {
+        logSupervisor(paths, 'window host ended with its last window; opening a new one')
+        dropWindowHost()
+        continue
+      }
+      return null
+    }
+  }
+  return null
 }
 
 async function pumpSharedApp(app, paths) {
@@ -959,37 +1010,36 @@ async function pumpSharedApp(app, paths) {
   }
 }
 
-async function showFrameless(url, paths) {
+async function showFrameless(url, paths, attempt = 0) {
   if (revealFrame()) return true
-  const app = await ensureSharedApp(paths)
-  if (!app) return false
-  let shell
-  try {
-    shell = app.createBrowserWindow({
-      title: 'DSH Server',
-      width: 440,
-      height: 220,
-      decorations: false,
-      resizable: false,
-      minimizable: true,
-      maximizable: false,
-    })
-  } catch (error) {
-    logSupervisor(paths, `frameless window: ${error instanceof Error ? error.message : error}`)
-    return false
-  }
+  if (frameWindow()) return false
+  const opened = await openShell(paths, {
+    title: 'DSH Server',
+    width: 440,
+    height: 220,
+    decorations: false,
+    resizable: false,
+    minimizable: true,
+    maximizable: false,
+  }, 'frameless window')
+  if (!opened) return false
+  const { app, shell } = opened
   if (typeof shell.setHasShadow === 'function') {
     try { shell.setHasShadow(false) } catch { /* host may not support it */ }
   }
   const dataDir = join(paths.root, 'frame')
   mkdirSync(dataDir, { recursive: true })
-  const webContext = app.createWebContext({ dataDirectory: dataDir })
   let webview
   try {
+    const webContext = app.createWebContext({ dataDirectory: dataDir })
     webview = shell.createWebview({ url, webContext })
   } catch (error) {
     logSupervisor(paths, `frameless window: ${error instanceof Error ? error.message : error}`)
     try { shell.close() } catch { /* already dead */ }
+    if (attempt === 0 && windowHostDied(error)) {
+      dropWindowHost()
+      return showFrameless(url, paths, 1)
+    }
     return false
   }
   applyWindowIcon(shell, 'dsh-server')
@@ -1037,8 +1087,8 @@ function appControlScript() {
   window.__dshAppWin = true;
   var TEXT = ${JSON.stringify(WIN_COPY)};
   var BAND = 60;
-  var HOT_W = 22;
-  var HOT_H = 12;
+  var HOT = 12;
+  var REACH = 156;
   var css = '#dsh-app-win{position:fixed;top:8px;right:8px;z-index:2147483646;display:flex;align-items:center;gap:1px;padding:3px;border-radius:8px;border:1px solid rgb(214,214,214);background:#fff;color:#1c1c1c;box-shadow:0 1px 3px rgb(0 0 0 / 16%);opacity:0;pointer-events:none;user-select:none;}'
     + '#dsh-app-win.on{opacity:1;pointer-events:auto;}'
     + '#dsh-app-win button{width:32px;height:26px;margin:0;padding:0;border:0;border-radius:5px;background:transparent;color:inherit;cursor:pointer;display:flex;align-items:center;justify-content:center;}'
@@ -1325,7 +1375,12 @@ function appControlScript() {
     return false;
   }
   function inHot(event) {
-    return event.clientX >= window.innerWidth - HOT_W && event.clientY <= HOT_H && event.clientY >= 0;
+    var x = event.clientX;
+    var y = event.clientY;
+    if (x < 0 || y < 0) return false;
+    var fromRight = window.innerWidth - x;
+    if (fromRight < 0) return false;
+    return (y <= HOT && fromRight <= REACH) || (fromRight <= HOT && y <= REACH);
   }
   function overBar(event) {
     var path = event.composedPath ? event.composedPath() : [event.target];
@@ -1457,39 +1512,42 @@ async function showAppWindowNow(url, paths) {
       return true
     } catch (error) {
       logSupervisor(paths, `app window focus: ${error instanceof Error ? error.message : error}`)
+      if (windowHostDied(error)) dropWindowHost()
     }
   }
-  const app = await ensureSharedApp(paths)
-  if (!app) return false
-  let shell
-  try {
-    shell = app.createBrowserWindow({
-      title: 'DSH',
-      width: 1200,
-      height: 800,
-      decorations: false,
-      resizable: true,
-      minimizable: true,
-      maximizable: true,
-      showMenu: false,
-    })
-  } catch (error) {
-    logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
-    return false
-  }
+  return openAppShell(url, paths, 0)
+}
+
+async function openAppShell(url, paths, attempt) {
+  const opened = await openShell(paths, {
+    title: 'DSH',
+    width: 1200,
+    height: 800,
+    decorations: false,
+    resizable: true,
+    minimizable: true,
+    maximizable: true,
+    showMenu: false,
+  }, 'app window')
+  if (!opened) return false
+  const { app, shell } = opened
   if (typeof shell.center === 'function') {
     try { shell.center() } catch { /* keep the default position */ }
   }
   const dataDir = join(paths.root, 'app')
   mkdirSync(dataDir, { recursive: true })
-  const webContext = app.createWebContext({ dataDirectory: dataDir })
   const controls = appControlScript()
   let webview
   try {
+    const webContext = app.createWebContext({ dataDirectory: dataDir })
     webview = shell.createWebview({ url, webContext, preload: controls })
   } catch (error) {
     logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
     try { shell.close() } catch { /* already dead */ }
+    if (attempt === 0 && windowHostDied(error)) {
+      dropWindowHost()
+      return openAppShell(url, paths, 1)
+    }
     return false
   }
   const syncMax = (on) => {
@@ -1574,7 +1632,7 @@ async function runAppWindow() {
 
 async function postFrame(url, body) {
   const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), 800)
+  const timer = setTimeout(() => ac.abort(), 4000)
   try {
     const response = await fetch(new URL('/api/frame', url), {
       method: 'POST',
@@ -1685,4 +1743,5 @@ export {
   panelPageHtml,
   runPanel,
   startPanelServer,
+  windowHostDied,
 }

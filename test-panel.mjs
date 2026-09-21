@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import {
   beginJob, endJob, ensureStateDir, mergeLayout, readJob, statePaths, writePanelPrefs,
 } from './dsh-rebooter-runtime.js'
-import { buildSnapshot, panelPageHtml } from './dsh-rebooter-panel.js'
+import { buildSnapshot, panelPageHtml, windowHostDied } from './dsh-rebooter-panel.js'
 import { availableActions } from './dsh-rebooter-core.js'
 import { cleanup, scratch } from './test-support.mjs'
 
@@ -74,6 +74,12 @@ try {
     .filter(line => !line.trimStart().startsWith('*') && !line.trimStart().startsWith('//'))
     .join('\n')
   check('panel CJK lives only in the dictionary and comments', /[\u4e00-\u9fff]/.test(withoutCopy), false)
+  check('a disposed window host is recognized', windowHostDied(new Error('Application has been disposed')), true)
+  check('any other window error is not a dead host', windowHostDied(new Error('module has no Application')), false)
+  check('a dead window host is replaced in the same process',
+    panelSource.includes('function dropWindowHost') && panelSource.includes('opening a new one') && !panelSource.includes('function holdAnchor') && panelSource.includes('revealFrame() || await showFrameless'), true)
+  check('the page controls open from an L at the top-right',
+    panelSource.includes('y <= HOT && fromRight <= REACH') && panelSource.includes('fromRight <= HOT && y <= REACH'), true)
   const zhKeys = [...(/zh: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
   const enKeys = [...(/en: \{([\s\S]*?)\n  \}/.exec(panelSource)?.[1] ?? '').matchAll(/'([^']+)':/g)].map(entry => entry[1])
   check('panel zh and en expose the same keys', [...zhKeys].sort(), [...enKeys].sort())
