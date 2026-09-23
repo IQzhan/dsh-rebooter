@@ -73,6 +73,8 @@ try {
       hostEnv.NODE_OPTIONS, '--require missing-on-purpose.cjs')
     check('non-Windows one-shot leaves NODE_OPTIONS unchanged',
       oneShot.NODE_OPTIONS, '--require missing-on-purpose.cjs')
+    check('non-Windows does not inject the windowsHide preload',
+      hostEnv.NODE_OPTIONS.includes('windows-hide-child.cjs'), false)
   }
   if (previousHttps === undefined) delete process.env.HTTPS_PROXY
   else process.env.HTTPS_PROXY = previousHttps
@@ -106,6 +108,7 @@ try {
   else process.env.NODE_OPTIONS = previousNodeOptions
 
   // Direct wrap behaviour of windows-hide-child.cjs (not only NODE_OPTIONS path).
+  // Same assertion count on every OS so README tallies match CI (Linux) and local (Windows).
   {
     const preload = join(ROOT, 'windows-hide-child.cjs')
     const probe = `
@@ -128,17 +131,20 @@ try {
       cp.spawnSync = spySync;
       cp.spawn = spySpawn;
       require(${JSON.stringify(preload)});
+      const wrapped = cp.spawnSync !== spySync || cp.spawn !== spySpawn;
       cp.spawnSync('x', [], undefined);
       cp.spawnSync('x', { cwd: '.' });
       cp.spawnSync('x', [], { windowsHide: false });
       cp.spawn('x', [], {});
-      process.stdout.write(JSON.stringify(seen));
+      process.stdout.write(JSON.stringify({ wrapped, platform: process.platform, seen }));
     `
     const run = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8' })
     check('windows-hide wrap probe exits cleanly', run.status, 0)
-    let seen = []
-    try { seen = JSON.parse(run.stdout || '[]') } catch { seen = [] }
+    let report = { wrapped: false, seen: [] }
+    try { report = JSON.parse(run.stdout || '{}') } catch { report = { wrapped: false, seen: [] } }
+    const seen = Array.isArray(report.seen) ? report.seen : []
     if (process.platform === 'win32') {
+      check('windows-hide wraps child_process on Windows', report.wrapped, true)
       check('windows-hide defaults windowsHide when options are omitted',
         seen[0]?.options?.windowsHide, true)
       check('windows-hide defaults windowsHide when options are the 2nd argument',
@@ -148,8 +154,15 @@ try {
       check('windows-hide wraps spawn as well as spawnSync',
         seen[3]?.kind === 'async' && seen[3]?.options?.windowsHide === true, true)
     } else {
-      check('windows-hide is a no-op off Windows',
-        seen.every(row => row.options === undefined || row.options.windowsHide === undefined), true)
+      check('windows-hide does not wrap child_process off Windows', report.wrapped, false)
+      check('windows-hide leaves omitted options alone off Windows',
+        seen[0]?.options, undefined)
+      check('windows-hide leaves a 2nd-argument options object alone off Windows',
+        seen[1]?.options, { cwd: '.' })
+      check('windows-hide leaves an explicit windowsHide: false alone off Windows',
+        seen[2]?.options?.windowsHide, false)
+      check('windows-hide leaves spawn options alone off Windows',
+        seen[3]?.kind === 'async' && seen[3]?.options?.windowsHide === undefined, true)
     }
   }
 
