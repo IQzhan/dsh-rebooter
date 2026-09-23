@@ -12,6 +12,7 @@ function shippedFiles() {
   const named = [
     'dsh-rebooter-core.js', 'dsh-rebooter-runtime.js', 'dsh-rebooter-panel.js',
     'dsh-rebooter.host.js', 'dsh-rebooter.client.js', 'dsh-rebooter-cli.js',
+    'windows-hide-child.cjs',
     'build-rebooter.mjs', 'run-tests.mjs', 'package.json', 'README.md', 'README.zh.md',
     'LICENSE', 'test-support.mjs',
   ]
@@ -31,6 +32,7 @@ function shippedFiles() {
   if (existsSync(join(ROOT, 'docs'))) walk(join(ROOT, 'docs'))
   for (const artifact of [
     'package/lib/index.cjs', 'package/lib/client.cjs', 'package/lib/cli.cjs',
+    'package/lib/windows-hide-child.cjs',
     'package/package.json', 'package/cordis.patch.yml',
   ]) {
     if (existsSync(join(ROOT, artifact))) files.push(join(ROOT, artifact))
@@ -99,6 +101,10 @@ check('runtime does not read or rewrite proxy variables',
   /HTTPS_PROXY|HTTP_PROXY|NO_PROXY|ALL_PROXY|WinINET|Internet Settings/.test(runtime), false)
 check('runtime restores a dropped NODE_OPTIONS from plugin sources then OS user env',
   /node-options/.test(runtime) && /DSH_NODE_OPTIONS/.test(runtime) && /HKCU\\\\Environment/.test(runtime), true)
+check('runtime prepends a windowsHide preload only on Windows',
+  /windows-hide-child\.cjs/.test(runtime)
+    && /prependWindowsHideRequire/.test(runtime)
+    && /process\.platform !== 'win32'/.test(runtime), true)
 check('runtime does not install an OS web view',
   /apt-get|pkexec|webview2-setup|fwlink/i.test(runtime), false)
 

@@ -361,15 +361,46 @@ function fillMissingNodeOptions(env, readOsUser = readOsUserNodeOptions) {
   return env
 }
 
+/**
+ * Path to the packaged `--require` preload (beside cli.cjs), or the checkout
+ * copy when tests run from the repo root.
+ */
+function windowsHidePreloadPath() {
+  const besideCli = join(dirname(cliPathFromHost()), 'windows-hide-child.cjs')
+  if (existsSync(besideCli)) return besideCli
+  const checkout = join(process.cwd(), 'windows-hide-child.cjs')
+  return existsSync(checkout) ? checkout : undefined
+}
+
+/**
+ * On Windows only: prepend `--require …/windows-hide-child.cjs` so a
+ * console-less host does not flash a new console on every child spawn.
+ * `windowsHide` is a Node spawn option (no-op elsewhere); we never touch
+ * Win32 APIs. Existing NODE_OPTIONS values are kept after this flag so later
+ * preloads (e.g. sysproxy) still wrap our wrap.
+ */
+function prependWindowsHideRequire(env) {
+  if (process.platform !== 'win32') return env
+  const file = windowsHidePreloadPath()
+  if (file === undefined) return env
+  const current = typeof env.NODE_OPTIONS === 'string' ? env.NODE_OPTIONS : ''
+  if (current.includes('windows-hide-child.cjs')) return env
+  const flag = /\s/.test(file) ? `--require "${file}"` : `--require ${file}`
+  env.NODE_OPTIONS = current.trim() === '' ? flag : `${flag} ${current.trim()}`
+  return env
+}
+
 function envForHost(layout, extra = {}, readOsUser = readOsUserNodeOptions) {
   // Parent environment is copied, not interpreted. Proxy variables stay as the
   // parent left them. A missing NODE_OPTIONS is filled from plugin-owned
   // sources first, then (Windows only) the OS user environment. Never invent.
+  // On Windows, prepend the windowsHide preload so tool spawns stay quiet.
   const env = { ...process.env, ...extra }
   if (typeof layout?.dshHome === 'string' && layout.dshHome.trim().length > 0) {
     env.DSH_HOME = layout.dshHome.trim()
   }
-  return fillMissingNodeOptions(env, readOsUser)
+  fillMissingNodeOptions(env, readOsUser)
+  return prependWindowsHideRequire(env)
 }
 
 function envForOneShot(layout) {
@@ -925,26 +956,27 @@ async function startHostProcess(paths, layout) {
   const env = envForHost(layout, {
     DSH_REBOOTER_SUPERVISOR: String(process.pid),
   })
+  // Keep the log fds open for the life of this supervisor. Closing them right
+  // after spawn can invalidate the child's inherited handles on Windows.
   const out = openSync(paths.outLog, 'w')
   const err = openSync(paths.errLog, 'w')
-  try {
-    const child = spawnProcess(layout.node || process.execPath, spawnArgv(layout), {
-      cwd: layout.cwd || process.cwd(),
-      env,
-      detached: true,
-      stdio: ['ignore', out, err],
-    })
-    if (!child.pid) throw new Error('failed to spawn the DSH host')
-    // Without unref(), a released supervisor keeps a handle on the living host
-    // and never exits — a zombie parent that still looks like "cli.cjs supervisor".
-    child.unref()
-    writePidFile(paths.nodePid, child.pid)
-    writeLayout(paths, { ...layout, nodePid: child.pid, supervisorPid: process.pid })
-    return child
-  } finally {
+  const child = spawnProcess(layout.node || process.execPath, spawnArgv(layout), {
+    cwd: layout.cwd || process.cwd(),
+    env,
+    detached: true,
+    stdio: ['ignore', out, err],
+  })
+  if (!child.pid) {
     closeSync(out)
     closeSync(err)
+    throw new Error('failed to spawn the DSH host')
   }
+  // Without unref(), a released supervisor keeps a handle on the living host
+  // and never exits — a zombie parent that still looks like "cli.cjs supervisor".
+  child.unref()
+  writePidFile(paths.nodePid, child.pid)
+  writeLayout(paths, { ...layout, nodePid: child.pid, supervisorPid: process.pid })
+  return child
 }
 
 async function stopRecorded(paths, layout) {

@@ -272,6 +272,7 @@ await writeFile(join(OUT_PACKAGE, 'cordis.patch.yml'), bundlePatch, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'index.cjs'), `${hostModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'client.cjs'), `${clientModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'cli.cjs'), `${cliModule}\n`, 'utf8')
+await copyFile(join(here, 'windows-hide-child.cjs'), join(OUT_PACKAGE, 'lib', 'windows-hide-child.cjs'))
 await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
   'DSH-Server.vbs and DSH-Server.sh ship with the package.',
   'The Desktop shortcut is created the first time the Host mounts.',

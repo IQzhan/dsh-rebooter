@@ -47,6 +47,8 @@
 
 开启服务后由独立的 Node 监督进程常驻：Web 宿主异常退出会拉起下一代，直到你主动 `stop`。开启服务**默认不再**打开浏览器，除非在面板勾选「开启服务时打开界面」（或 CLI 传 `--open`）。关闭服务时会一并关掉界面窗口。窗口上的关闭只关窗口，不停服务。
 
+在 Windows 上，无控制台宿主每次短工具调用都会闪一下控制台。由本插件拉起宿主时，会把 `windows-hide-child.cjs` 前置进 `NODE_OPTIONS`，让子进程默认带上 Node 的 `windowsHide`。你在终端自己跑 `dsh web` 时不会注入。
+
 ## 安装
 
 直接从 npm 安装，然后重启 `dsh web`。
@@ -114,6 +116,7 @@ node publish-via-actions.mjs 1.0.1
 | `dsh-rebooter.host.js` | Cordis 适配：记录启动、HTTP、派出 CLI |
 | `dsh-rebooter.client.js` | 不画页面；菜单在窗口操作栏 |
 | `dsh-rebooter-cli.js` | `start` / `stop` / `restart` / `update*` / `open` / `panel` / `desktop` |
+| `windows-hide-child.cjs` | Windows 下 `NODE_OPTIONS` 预加载：子进程默认 `windowsHide` |
 | `build-rebooter.mjs` | 构建 `package/` |
 | `docs/dsh-plugin-spec.md` | DSH 插件制作规范 |
 | `docs/design-notes.md` | 本插件的设计说明 |
@@ -125,7 +128,7 @@ node publish-via-actions.mjs 1.0.1
 node verify.mjs
 ```
 
-**8 个套件、198 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**8 个套件、207 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 

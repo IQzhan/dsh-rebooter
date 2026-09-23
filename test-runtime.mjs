@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
@@ -8,7 +9,7 @@ import {
   resolveHome, sendControl, sleep, spawnProcess, startControlServer, statePaths, writePanelPrefs,
   writePidFile,
 } from './dsh-rebooter-runtime.js'
-import { cleanup, scratch } from './test-support.mjs'
+import { cleanup, ROOT, scratch } from './test-support.mjs'
 
 const results = []
 function check(label, actual, expected) {
@@ -55,28 +56,102 @@ try {
   const hostEnv = envForHost({ dshHome: home })
   const oneShot = envForOneShot({ dshHome: home })
   check('host does not rewrite HTTPS_PROXY', hostEnv.HTTPS_PROXY, 'http://127.0.0.1:9')
-  check('host does not rewrite NODE_OPTIONS', hostEnv.NODE_OPTIONS, '--require missing-on-purpose.cjs')
-  check('one-shot does not strip NODE_OPTIONS', oneShot.NODE_OPTIONS, '--require missing-on-purpose.cjs')
+  check('host keeps an explicit NODE_OPTIONS prefix',
+    hostEnv.NODE_OPTIONS.includes('--require missing-on-purpose.cjs'), true)
+  check('one-shot keeps an explicit NODE_OPTIONS prefix',
+    oneShot.NODE_OPTIONS.includes('--require missing-on-purpose.cjs'), true)
+  if (process.platform === 'win32') {
+    check('on Windows host prepends the windowsHide preload',
+      hostEnv.NODE_OPTIONS.includes('windows-hide-child.cjs'), true)
+    check('on Windows one-shot prepends the windowsHide preload',
+      oneShot.NODE_OPTIONS.includes('windows-hide-child.cjs'), true)
+    check('on Windows the hide preload comes before an existing NODE_OPTIONS value',
+      hostEnv.NODE_OPTIONS.indexOf('windows-hide-child.cjs')
+        < hostEnv.NODE_OPTIONS.indexOf('missing-on-purpose.cjs'), true)
+  } else {
+    check('non-Windows host leaves NODE_OPTIONS unchanged',
+      hostEnv.NODE_OPTIONS, '--require missing-on-purpose.cjs')
+    check('non-Windows one-shot leaves NODE_OPTIONS unchanged',
+      oneShot.NODE_OPTIONS, '--require missing-on-purpose.cjs')
+  }
   if (previousHttps === undefined) delete process.env.HTTPS_PROXY
   else process.env.HTTPS_PROXY = previousHttps
   delete process.env.NODE_OPTIONS
   const restored = envForHost({ dshHome: home }, {}, () => '--require from-user.cjs')
-  check('missing NODE_OPTIONS is restored from the OS user environment', restored.NODE_OPTIONS, '--require from-user.cjs')
+  check('missing NODE_OPTIONS is restored from the OS user environment',
+    restored.NODE_OPTIONS.includes('--require from-user.cjs'), true)
   const parentWins = envForHost({ dshHome: home }, { NODE_OPTIONS: '--require parent.cjs' }, () => '--require from-user.cjs')
-  check('an explicit NODE_OPTIONS is not replaced', parentWins.NODE_OPTIONS, '--require parent.cjs')
+  check('an explicit NODE_OPTIONS is not replaced',
+    parentWins.NODE_OPTIONS.includes('--require parent.cjs')
+      && !parentWins.NODE_OPTIONS.includes('--require from-user.cjs'), true)
   const blank = envForHost({ dshHome: home }, {}, () => '  ')
-  check('a blank OS user NODE_OPTIONS stays absent', blank.NODE_OPTIONS, undefined)
+  if (process.platform === 'win32') {
+    check('a blank OS user NODE_OPTIONS still gets the hide preload on Windows',
+      typeof blank.NODE_OPTIONS === 'string' && blank.NODE_OPTIONS.includes('windows-hide-child.cjs'), true)
+  } else {
+    check('a blank OS user NODE_OPTIONS stays absent off Windows', blank.NODE_OPTIONS, undefined)
+  }
   writeFileSync(join(home, 'rebooter', 'node-options'), '# comment\n--require from-file.cjs\n', 'utf8')
   const fromFile = envForHost({ dshHome: home }, {}, () => '--require from-user.cjs')
-  check('plugin node-options file wins over the OS user environment', fromFile.NODE_OPTIONS, '--require from-file.cjs')
+  check('plugin node-options file wins over the OS user environment',
+    fromFile.NODE_OPTIONS.includes('--require from-file.cjs'), true)
   const fromPluginEnv = envForHost(
     { dshHome: home },
     { DSH_NODE_OPTIONS: '--require from-env.cjs' },
     () => '--require from-user.cjs',
   )
-  check('DSH_NODE_OPTIONS wins over the plugin file', fromPluginEnv.NODE_OPTIONS, '--require from-env.cjs')
+  check('DSH_NODE_OPTIONS wins over the plugin file',
+    fromPluginEnv.NODE_OPTIONS.includes('--require from-env.cjs'), true)
   if (previousNodeOptions === undefined) delete process.env.NODE_OPTIONS
   else process.env.NODE_OPTIONS = previousNodeOptions
+
+  // Direct wrap behaviour of windows-hide-child.cjs (not only NODE_OPTIONS path).
+  {
+    const preload = join(ROOT, 'windows-hide-child.cjs')
+    const probe = `
+      const cp = require('node:child_process');
+      const seen = [];
+      function capture(file, args, options) {
+        if (args != null && typeof args === 'object' && !Array.isArray(args)) {
+          options = args;
+        }
+        return options == null ? options : { ...options };
+      }
+      const spySync = function (file, args, options) {
+        seen.push({ kind: 'sync', options: capture(file, args, options) });
+        return { status: 0, pid: 1, stdout: '', stderr: '', output: [] };
+      };
+      const spySpawn = function (file, args, options) {
+        seen.push({ kind: 'async', options: capture(file, args, options) });
+        return { on() {}, unref() {}, pid: 1 };
+      };
+      cp.spawnSync = spySync;
+      cp.spawn = spySpawn;
+      require(${JSON.stringify(preload)});
+      cp.spawnSync('x', [], undefined);
+      cp.spawnSync('x', { cwd: '.' });
+      cp.spawnSync('x', [], { windowsHide: false });
+      cp.spawn('x', [], {});
+      process.stdout.write(JSON.stringify(seen));
+    `
+    const run = spawnSync(process.execPath, ['-e', probe], { encoding: 'utf8' })
+    check('windows-hide wrap probe exits cleanly', run.status, 0)
+    let seen = []
+    try { seen = JSON.parse(run.stdout || '[]') } catch { seen = [] }
+    if (process.platform === 'win32') {
+      check('windows-hide defaults windowsHide when options are omitted',
+        seen[0]?.options?.windowsHide, true)
+      check('windows-hide defaults windowsHide when options are the 2nd argument',
+        seen[1]?.options?.windowsHide === true && seen[1]?.options?.cwd === '.', true)
+      check('windows-hide keeps an explicit windowsHide: false',
+        seen[2]?.options?.windowsHide, false)
+      check('windows-hide wraps spawn as well as spawnSync',
+        seen[3]?.kind === 'async' && seen[3]?.options?.windowsHide === true, true)
+    } else {
+      check('windows-hide is a no-op off Windows',
+        seen.every(row => row.options === undefined || row.options.windowsHide === undefined), true)
+    }
+  }
 
   check('lookOnPath finds node', typeof lookOnPath('node') === 'string' || lookOnPath('node.exe') !== undefined, true)
 

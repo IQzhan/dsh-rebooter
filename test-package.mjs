@@ -128,7 +128,10 @@ try {
       const files = packedFiles(root)
       const mismatches = []
       if (files.some(name => name.startsWith('node_modules/'))) mismatches.push('node_modules was published')
-      for (const name of ['panel/DSH-Server.vbs', 'panel/DSH-Server.sh', 'lib/cli.cjs', 'lib/index.cjs']) {
+      for (const name of [
+        'panel/DSH-Server.vbs', 'panel/DSH-Server.sh',
+        'lib/cli.cjs', 'lib/index.cjs', 'lib/windows-hide-child.cjs',
+      ]) {
         if (!files.includes(name)) mismatches.push(`missing ${name}`)
       }
       for (const name of files) {

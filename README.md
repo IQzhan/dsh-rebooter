@@ -47,6 +47,8 @@ The four menu items open from the power button on the page window's control bar.
 
 A detached Node supervisor keeps DSH alive after start: an unexpected host exit is relaunched until you `stop`. Starting the service no longer opens the browser unless **Open UI when the service starts** is checked in the panel (or you pass `--open`). Stopping the service also closes the page window. The window close button only closes that window.
 
+On Windows, a console-less host would flash a console on every short tool spawn. When this plugin starts the host, it prepends `windows-hide-child.cjs` to `NODE_OPTIONS` so Node's `windowsHide` defaults on for those children. A terminal `dsh web` does not get that inject.
+
 ## Install
 
 Anyone can install it from npm. Then restart `dsh web`.
@@ -114,6 +116,7 @@ Before the first run, add a Trusted Publisher on the npm package settings: user 
 | `dsh-rebooter.host.js` | Cordis adapter: records launch, HTTP, dispatches CLI |
 | `dsh-rebooter.client.js` | No page UI; the menu is on the window bar |
 | `dsh-rebooter-cli.js` | `start` / `stop` / `restart` / `update*` / `open` / `panel` / `desktop` |
+| `windows-hide-child.cjs` | Windows `NODE_OPTIONS` preload: default `windowsHide` on child spawns |
 | `build-rebooter.mjs` | Builds `package/` |
 | `docs/dsh-plugin-spec.md` | DSH plugin conventions |
 | `docs/design-notes.md` | Why this plugin is shaped this way |
@@ -125,7 +128,7 @@ Before the first run, add a Trusted Publisher on the npm package settings: user 
 node verify.mjs
 ```
 
-**8 suites, 198 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 207 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

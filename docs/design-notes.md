@@ -32,6 +32,8 @@ This plugin's equivalent is a **detached Node supervisor** (no console window):
 
 Closing a terminal, Explorer, or the browser therefore does not end DSH. Only `stop` / `update-stop` does. Spawn uses Node `detached` + `windowsHide` + ignored stdio — no console titled by `process.title`, and no PowerShell / schtasks / VBS on the supervisor hot path (VBS is only the optional desktop double-click launcher).
 
+On Windows, a console-less host would otherwise flash a new console for every short-lived child (tool calls). `envForHost` **prepends** `--require <package>/windows-hide-child.cjs` to `NODE_OPTIONS` (keeping any existing value after it, so other preloads such as a system-proxy hook still wrap ours). That preload defaults Node's `windowsHide` spawn option when the caller omitted it — no Win32 APIs, and a no-op on other platforms. This only applies when this plugin starts the host (`start` / the supervisor); a terminal `dsh web` does not get the inject.
+
 ## Outbound network
 
 This plugin does not read, strip, or set proxy variables. The environment of the process that starts it is copied onto the supervisor and the host. If that copy has no `NODE_OPTIONS`, the plugin fills it from its own sources first (`DSH_NODE_OPTIONS`, then `$DSH_HOME/rebooter/node-options`), and only on Windows falls back to a read of the user environment so an already-installed preload still loads when the parent dropped it. Following the system proxy, including a change after DSH is already up, remains that preload's job.
