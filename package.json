@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@resvg/resvg-js": "^2.6.2",
-    "@webviewjs/webview": "^0.4.5"
+    "@webviewjs/webview": "^0.4.5",
+    "koffi": "^3.3.0"
   }
 }

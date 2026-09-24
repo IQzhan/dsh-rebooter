@@ -81,7 +81,7 @@ function mountRebooter(ctx) {
           send(400, { ok: false, error: `unknown action ${JSON.stringify(action)}` })
           return
         }
-        dispatchCli(action, ['--from-host'])
+        dispatchCli(action, ['--from-host'], { dshHome: layout.dshHome, cwd: layout.cwd })
         void ensurePanelVisible(paths, layout)
         send(200, { ok: true, action, dispatched: true })
         return

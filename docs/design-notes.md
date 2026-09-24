@@ -12,9 +12,12 @@ This document records **why** `dsh-rebooter` is shaped the way it is. The instal
 | `update` | no | yes (when stopped) |
 | `update-stop` | yes | yes |
 | `update-restart` | yes | yes |
+| `update-dsh` | no | yes (when stopped) |
+| `update-dsh-stop` | no | yes (when running) |
+| `update-dsh-restart` | no | yes |
 | `open` | no | yes (when running) |
 
-The four in-app items open from the power button on the page window's control bar. They are not a sidebar control, and they are not a one-click stop. Start stays on the panel and the CLI.
+The four in-app items open from the power button on the page window's control bar. They are **plugin** lifecycle only (`stop` / `restart` / `update-stop` / `update-restart`). DSH harness upgrades live on the panel and the CLI. Start stays on the panel and the CLI.
 
 The desktop entry is a single **DSH Server** status panel (see [`status-panel.md`](status-panel.md)). Start does **not** open the browser unless `panel.json` has `autoOpen: true` or the CLI passes `--open`.
 
@@ -34,11 +37,13 @@ Closing a terminal, Explorer, or the browser therefore does not end DSH. Only `s
 
 On Windows, a console-less host would otherwise flash a new console for every short-lived child (tool calls). `envForHost` **prepends** `--require <package>/windows-hide-child.cjs` to `NODE_OPTIONS` (keeping any existing value after it, so other preloads such as a system-proxy hook still wrap ours). That preload defaults Node's `windowsHide` spawn option when the caller omitted it — no Win32 APIs, and a no-op on other platforms. This only applies when this plugin starts the host (`start` / the supervisor); a terminal `dsh web` does not get the inject.
 
+The frameless **DSH page** window is separate: on Windows it may load `windows-caption-drag.cjs` so top-edge drag gets Aero Snap. The status panel never loads that helper. See [`status-panel.md`](status-panel.md).
+
 ## Outbound network
 
 This plugin does not read, strip, or set proxy variables. The environment of the process that starts it is copied onto the supervisor and the host. If that copy has no `NODE_OPTIONS`, the plugin fills it from its own sources first (`DSH_NODE_OPTIONS`, then `$DSH_HOME/rebooter/node-options`), and only on Windows falls back to a read of the user environment so an already-installed preload still loads when the parent dropped it. Following the system proxy, including a change after DSH is already up, remains that preload's job.
 
-## Update means every plugin, after DSH is down
+## Update plugins means every plugin, after DSH is down
 
 `update-stop` and `update-restart` reconstruct
 
@@ -48,7 +53,11 @@ This plugin does not read, strip, or set proxy variables. The environment of the
 
 from the captured launch. That is `dsh plugin --profile web update --latest`. It runs in a **separate** CLI process after the web host has exited. This plugin does not rewrite that process's environment.
 
-There is no `git pull` of the harness checkout and no overlay dance. Those belong to a source tree, not to an installed plugin.
+Plugin update does **not** `git pull` the harness checkout and does not do an overlay dance. Upgrading the recorded DSH install is a separate action family (`update-dsh*`).
+
+## Update DSH means the harness install behind `layout.json`
+
+`update-dsh` / `update-dsh-stop` / `update-dsh-restart` classify the entry in `layout.args[0]` as a git checkout or an npm install of `@deepseek-ai/dsh`, then run PATH tools only (`git` / `pnpm` / `npm`). Dirty trees, non-fast-forward pulls, and `npx` cache paths are refused. Git checkouts schedule a browser client rebuild only when `git pull` brought commits. On failure after mutation, upgrades restore the pre-update state: git checkouts `reset --hard` to the captured HEAD (then `pnpm install`); npm installs reinstall the prior `@deepseek-ai/dsh` version and restore `layout.json`; plugin updates restore snapshotted profile manifests and reinstall. `update-restart` / `update-dsh-restart` still bring the host back up if the upgrade step fails after that restore (job ends in error with `service restored; upgrade failed: …`). After a successful npm upgrade the layout entry is refreshed. These actions never call `dsh plugin … update`.
 
 ## Start from the desktop
 

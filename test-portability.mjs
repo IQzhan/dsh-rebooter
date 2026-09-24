@@ -13,6 +13,7 @@ function shippedFiles() {
     'dsh-rebooter-core.js', 'dsh-rebooter-runtime.js', 'dsh-rebooter-panel.js',
     'dsh-rebooter.host.js', 'dsh-rebooter.client.js', 'dsh-rebooter-cli.js',
     'windows-hide-child.cjs',
+    'windows-caption-drag.cjs',
     'build-rebooter.mjs', 'run-tests.mjs', 'package.json', 'README.md', 'README.zh.md',
     'LICENSE', 'test-support.mjs',
   ]
@@ -33,6 +34,7 @@ function shippedFiles() {
   for (const artifact of [
     'package/lib/index.cjs', 'package/lib/client.cjs', 'package/lib/cli.cjs',
     'package/lib/windows-hide-child.cjs',
+    'package/lib/windows-caption-drag.cjs',
     'package/package.json', 'package/cordis.patch.yml',
   ]) {
     if (existsSync(join(ROOT, artifact))) files.push(join(ROOT, artifact))
@@ -96,7 +98,8 @@ check('desktop launcher may use WScript for a windowless start', /WScript\.Shell
 check('desktop shortcut targets wscript host string', /wscript\.exe/.test(runtime), true)
 check('darwin desktop entry is an app bundle, not a terminal command',
   runtime.includes("'DSH Server.app'") && !/join\(desk, 'DSH Server\.command'\)/.test(runtime), true)
-check('default UI open launches the app window', /\[cli, 'app'\]/.test(runtime), true)
+check('default UI open goes through the panel singleton',
+  /openDshUiAsync/.test(runtime) && /ensurePanelHttp/.test(runtime) && !/\[cli, 'app'\]/.test(runtime), true)
 check('runtime does not read or rewrite proxy variables',
   /HTTPS_PROXY|HTTP_PROXY|NO_PROXY|ALL_PROXY|WinINET|Internet Settings/.test(runtime), false)
 check('runtime restores a dropped NODE_OPTIONS from plugin sources then OS user env',
@@ -105,6 +108,11 @@ check('runtime prepends a windowsHide preload only on Windows',
   /windows-hide-child\.cjs/.test(runtime)
     && /prependWindowsHideRequire/.test(runtime)
     && /process\.platform !== 'win32'/.test(runtime), true)
+check('Windows caption drag is isolated and only loaded on win32',
+  existsSync(join(ROOT, 'windows-caption-drag.cjs'))
+    && /WM_NCLBUTTONDOWN|HTCAPTION/.test(readFileSync(join(ROOT, 'windows-caption-drag.cjs'), 'utf8'))
+    && /startOsWindowDrag/.test(readFileSync(join(ROOT, 'dsh-rebooter-panel.js'), 'utf8'))
+    && /process\.platform !== 'win32'/.test(readFileSync(join(ROOT, 'dsh-rebooter-panel.js'), 'utf8')), true)
 check('runtime does not install an OS web view',
   /apt-get|pkexec|webview2-setup|fwlink/i.test(runtime), false)
 

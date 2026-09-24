@@ -10,19 +10,26 @@
  */
 
 import {
-  ALL_ACTIONS, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, LAYOUT_VERSION, STATE_DIR_NAME,
-  availableActions, backoffDelay, captureLaunch, canonicalUrl, controlPort, defaultPanelPrefs,
-  idleJob, isAction, isPidAlive, panelPort, parseWebUrl, pluginUpdateArgs, shouldOpenUi,
-  spawnArgv, webIndex, withNoOpen,
+  ALL_ACTIONS, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, DSH_PACKAGE, LAYOUT_VERSION, STATE_DIR_NAME,
+  availableActions, backoffDelay, captureLaunch, canonicalUrl, classifyHarness, controlPort,
+  defaultPanelPrefs, dshUpdatePlan, gitClientBuildNeeded, gitPullBroughtCommits, idleJob, isAction, isPidAlive, panelPort,
+  parseWebUrl, pluginUpdateArgs, shouldOpenUi, spawnArgv, webIndex, withNoOpen,
 } from './dsh-rebooter-core.js'
 import {
   appendFileSync, chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync,
-  readdirSync, rmSync, statSync, writeFileSync,
+  readdirSync, realpathSync, rmSync, statSync, writeFileSync,
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import net from 'node:net'
+
+const harnessFs = {
+  existsSync,
+  readFileSync,
+  realpathSync: (path) => realpathSync(path),
+  statSync: (path) => statSync(path),
+}
 
 function resolveHome(env = process.env) {
   const fromEnv = env?.DSH_HOME
@@ -37,6 +44,7 @@ function statePaths(home = resolveHome()) {
     layout: join(root, 'layout.json'),
     supervisorPid: join(root, 'supervisor.pid'),
     nodePid: join(root, 'node.pid'),
+    panelPid: join(root, 'panel.pid'),
     keepalive: join(root, 'keepalive'),
     stopping: join(root, 'stopping'),
     outLog: join(root, 'web.out.log'),
@@ -187,24 +195,109 @@ function endJob(paths, state, message, error) {
 }
 
 function openDshUi(paths, layout) {
+  // Fire-and-forget wrapper for sync call sites; prefer openDshUiAsync.
+  void openDshUiAsync(paths, layout)
+  const url = readWebUrl(paths, layout)
+  return { ok: true, url, app: readPanelPrefs(paths).openApp || null, pending: true }
+}
+
+async function panelHttpReady(port, timeoutMs = 1500) {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), timeoutMs)
+  try {
+    const response = await fetch(`http://${DEFAULT_HOST}:${port}/api/snapshot`, { signal: ac.signal })
+    if (!response.ok) return false
+    await response.json()
+    return true
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+async function ensurePanelHttp(paths, layout) {
+  const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
+  if (await panelHttpReady(port)) return true
+  const cli = cliPathFromHost()
+  const node = layout?.node || process.execPath
+  const env = { ...process.env }
+  if (layout?.dshHome) env.DSH_HOME = layout.dshHome
+  spawnDetached(node, [cli, 'panel', '--serve'], {
+    cwd: layout?.cwd || process.cwd(),
+    env,
+  })
+  const deadline = Date.now() + 8000
+  while (Date.now() < deadline) {
+    if (await panelHttpReady(port, 800)) return true
+    await sleep(150)
+  }
+  return panelHttpReady(port, 800)
+}
+
+async function requestAppWindowOpen(paths, layout, options = {}) {
+  const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
+  const url = typeof options.url === 'string' && options.url.length > 0
+    ? options.url
+    : readWebUrl(paths, layout)
+  if (!url) return false
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), 12000)
+  try {
+    const response = await fetch(`http://${DEFAULT_HOST}:${port}/api/app`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        force: options.force !== false,
+        resetCache: options.resetCache === true,
+        url,
+      }),
+      signal: ac.signal,
+    })
+    if (!response.ok) return false
+    const body = await response.json()
+    return body?.ok === true && body?.shown !== false
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Open the DSH page through the single panel process (never a second HTTP server).
+ * Tokenized URLs 303-set a cookie then land on `/`; a stale WebView profile makes
+ * that land on a blank 401 shell — force a cold window when requested.
+ */
+async function openDshUiAsync(paths, layout, options = {}) {
   const prefs = readPanelPrefs(paths)
   const url = readWebUrl(paths, layout)
   if (typeof url !== 'string' || url.length === 0) {
-    throw new Error('DSH URL is not available yet')
+    throw new Error('DSH URL is not available yet (waiting for tokenized dsh web: line)')
   }
   if (prefs.openApp) {
     spawnDetached(prefs.openApp, [url])
     return { ok: true, url, app: prefs.openApp }
   }
-  const cli = cliPathFromHost()
-  spawnDetached(process.execPath, [cli, 'app'])
-  return { ok: true, url, app: null }
+  const ready = await ensurePanelHttp(paths, layout)
+  if (!ready) {
+    throw new Error('panel HTTP did not start; cannot open the DSH page window')
+  }
+  const shown = await requestAppWindowOpen(paths, layout, {
+    url,
+    force: true,
+    resetCache: options.resetCache === true,
+  })
+  if (!shown) {
+    throw new Error('panel could not open the DSH page window')
+  }
+  return { ok: true, url, app: null, shown: true }
 }
 
 async function requestAppWindowClose(layout) {
   const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
   const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), 800)
+  const timer = setTimeout(() => ac.abort(), 2000)
   try {
     await fetch(`http://${DEFAULT_HOST}:${port}/api/app`, {
       method: 'POST',
@@ -446,7 +539,9 @@ async function probeHttp(url, timeoutMs = 4000) {
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   try {
     const response = await fetch(url, { signal: ac.signal, redirect: 'manual' })
-    return response.status >= 200 && response.status < 500
+    // 401 on the bare origin means "listening but not usable" — wait for the
+    // tokenized `dsh web:` URL instead of opening a locked shell.
+    return response.status >= 200 && response.status < 400
   } catch {
     return false
   } finally {
@@ -454,25 +549,32 @@ async function probeHttp(url, timeoutMs = 4000) {
   }
 }
 
+function isTokenizedWebUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) return false
+  try {
+    const parsed = new URL(url)
+    const token = parsed.searchParams.get('token')
+    return typeof token === 'string' && token.length > 0
+  } catch {
+    return false
+  }
+}
+
 function readWebUrl(paths, layout) {
   // Prefer the log's tokenized URL over a bare `web.url` — a 401 on `/` means
   // the server is up, but opening / saving the bare origin is not useful.
   const fromLog = parseWebUrl(readText(paths.outLog) ?? '')
-  if (fromLog) return fromLog
+  if (fromLog && isTokenizedWebUrl(fromLog)) return fromLog
   const fromFile = readText(paths.url)?.trim()
-  if (fromFile) return fromFile
-  return canonicalUrl(layout, '/')
+  if (fromFile && isTokenizedWebUrl(fromFile)) return fromFile
+  return undefined
 }
 
 async function waitWebReady(paths, layout, timeoutMs = 120000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const url = readWebUrl(paths, layout)
-    if (await probeHttp(url, 3000)) {
-      writeText(paths.url, url)
-      return url
-    }
-    if (await isWebListening(layout)) {
+    if (url && await probeHttp(url, 3000)) {
       writeText(paths.url, url)
       return url
     }
@@ -953,6 +1055,9 @@ function mergeLayout(paths, captured) {
 
 async function startHostProcess(paths, layout) {
   ensureStateDir(paths)
+  if (await isWebListening(layout)) {
+    throw new Error(`refusing a second DSH host: port ${layout.port || DEFAULT_PORT} is already listening`)
+  }
   const env = envForHost(layout, {
     DSH_REBOOTER_SUPERVISOR: String(process.pid),
   })
@@ -1008,15 +1113,182 @@ function cliPathFromHost() {
   return join(typeof __dirname === 'string' ? __dirname : process.cwd(), 'cli.cjs')
 }
 
-function dispatchCli(action, extraArgs = []) {
+function dispatchCli(action, extraArgs = [], options = {}) {
   if (process.env.DSH_REBOOTER_DRY_RUN === '1') {
     return { pid: 0, unref() {} }
   }
   const cli = cliPathFromHost()
+  const env = { ...process.env }
+  if (typeof options.dshHome === 'string' && options.dshHome.trim()) {
+    env.DSH_HOME = options.dshHome.trim()
+  }
   return spawnDetached(process.execPath, [cli, action, ...extraArgs], {
-    cwd: process.cwd(),
-    env: process.env,
+    cwd: options.cwd || process.cwd(),
+    env,
   })
+}
+
+const PROFILE_ROLLBACK_FILES = Object.freeze([
+  'package.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+])
+
+function profileHomeDir(layout) {
+  const home = typeof layout?.dshHome === 'string' && layout.dshHome.trim()
+    ? layout.dshHome.trim()
+    : resolveHome()
+  const profile = typeof layout?.profile === 'string' && layout.profile.trim()
+    ? layout.profile.trim()
+    : DEFAULT_PROFILE
+  return join(home, 'profiles', profile)
+}
+
+function cloneLayout(layout) {
+  return JSON.parse(JSON.stringify(layout))
+}
+
+function readPackageVersion(pkgPath) {
+  if (!existsSync(pkgPath)) return ''
+  try {
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+    return typeof pkg?.version === 'string' ? pkg.version.trim() : ''
+  } catch {
+    return ''
+  }
+}
+
+function rollbackDir(paths, name) {
+  return join(paths.root, 'rollback', name)
+}
+
+function clearRollbackDir(dir) {
+  try { rmSync(dir, { recursive: true, force: true }) } catch { /* best effort */ }
+}
+
+function snapshotProfileManifests(paths, layout) {
+  const profileDir = profileHomeDir(layout)
+  const snapRoot = rollbackDir(paths, 'plugins')
+  clearRollbackDir(snapRoot)
+  mkdirSync(snapRoot, { recursive: true })
+  const saved = []
+  for (const name of PROFILE_ROLLBACK_FILES) {
+    const src = join(profileDir, name)
+    if (!existsSync(src)) continue
+    copyFileSync(src, join(snapRoot, name))
+    saved.push(name)
+  }
+  writeJson(join(snapRoot, 'meta.json'), {
+    version: 1,
+    profileDir,
+    saved,
+    capturedAt: new Date().toISOString(),
+  })
+  return { snapRoot, profileDir, saved }
+}
+
+async function restoreProfileManifests(paths, snap, env) {
+  if (!snap || !Array.isArray(snap.saved) || snap.saved.length === 0) {
+    appendJobLog(paths, 'plugin rollback skipped: no profile snapshot')
+    return
+  }
+  appendJobLog(paths, `rolling back profile manifests (${snap.saved.join(', ')})…`)
+  mkdirSync(snap.profileDir, { recursive: true })
+  for (const name of snap.saved) {
+    const src = join(snap.snapRoot, name)
+    if (!existsSync(src)) continue
+    copyFileSync(src, join(snap.profileDir, name))
+  }
+  const usePnpm = existsSync(join(snap.profileDir, 'pnpm-lock.yaml'))
+    || snap.saved.includes('pnpm-lock.yaml')
+  if (usePnpm) {
+    await runRecipeStep(paths, {
+      tool: 'pnpm',
+      args: ['install'],
+      cwd: snap.profileDir,
+      label: 'pnpm install (plugin rollback)',
+    }, env)
+  } else if (existsSync(join(snap.profileDir, 'package-lock.json'))) {
+    await runRecipeStep(paths, {
+      tool: 'npm',
+      args: ['install'],
+      cwd: snap.profileDir,
+      label: 'npm install (plugin rollback)',
+    }, env)
+  }
+}
+
+async function captureGitHead(paths, gitRoot, env) {
+  const git = resolveTool('git', env)
+  const result = await runLoggedCommand(paths, git, ['rev-parse', 'HEAD'], {
+    cwd: gitRoot,
+    env,
+    label: 'git rev-parse HEAD',
+  })
+  if (result.status !== 0) {
+    throw new Error(`git rev-parse HEAD failed (exit ${result.status ?? '?'})`)
+  }
+  const sha = String(result.stdout || '').trim()
+  if (!/^[0-9a-f]{7,40}$/i.test(sha)) {
+    throw new Error(`git rev-parse HEAD returned an unexpected value`)
+  }
+  return sha
+}
+
+async function rollbackGitCheckout(paths, gitRoot, env, preSha) {
+  appendJobLog(paths, `rolling back git to ${preSha.slice(0, 7)}…`)
+  logSupervisor(paths, `rolling back git to ${preSha.slice(0, 7)}`)
+  await runRecipeStep(paths, {
+    tool: 'git',
+    args: ['reset', '--hard', preSha],
+    cwd: gitRoot,
+    label: `git reset --hard ${preSha.slice(0, 7)}`,
+  }, env)
+  await runRecipeStep(paths, {
+    tool: 'pnpm',
+    args: ['install'],
+    cwd: gitRoot,
+    label: 'pnpm install (git rollback)',
+  }, env)
+}
+
+async function rollbackNpmDsh(paths, plan, env, preVersion, preLayout) {
+  if (!preVersion) {
+    appendJobLog(paths, 'npm rollback skipped: no prior @deepseek-ai/dsh version captured')
+  } else {
+    const step = (plan.steps || [])[0]
+    const cwd = step?.cwd || process.cwd()
+    const labelBase = plan.scope === 'global' ? 'npm install -g' : (step?.tool === 'pnpm' ? 'pnpm add' : 'npm install')
+    appendJobLog(paths, `rolling back ${DSH_PACKAGE} to ${preVersion}…`)
+    if (plan.scope === 'global') {
+      await runRecipeStep(paths, {
+        tool: 'npm',
+        args: ['install', '-g', `${DSH_PACKAGE}@${preVersion}`],
+        cwd,
+        label: `${labelBase} ${DSH_PACKAGE}@${preVersion}`,
+      }, env)
+    } else if (step?.tool === 'pnpm') {
+      await runRecipeStep(paths, {
+        tool: 'pnpm',
+        args: ['add', `${DSH_PACKAGE}@${preVersion}`],
+        cwd,
+        label: `${labelBase} ${DSH_PACKAGE}@${preVersion}`,
+      }, env)
+    } else {
+      await runRecipeStep(paths, {
+        tool: 'npm',
+        args: ['install', `${DSH_PACKAGE}@${preVersion}`],
+        cwd,
+        label: `${labelBase} ${DSH_PACKAGE}@${preVersion}`,
+      }, env)
+    }
+  }
+  if (preLayout) {
+    writeLayout(paths, preLayout)
+    appendJobLog(paths, 'layout.json restored')
+  }
 }
 
 async function updatePlugins(paths, layout) {
@@ -1029,33 +1301,304 @@ async function updatePlugins(paths, layout) {
   logSupervisor(paths, 'updating profile plugins')
   appendJobLog(paths, 'updating profile plugins…')
   const env = envForOneShot(layout)
-  let result
-  if (argv !== undefined) {
-    result = spawnSync(node, argv, {
-      cwd: layout.cwd || process.cwd(),
-      env,
-      encoding: 'utf8',
-      windowsHide: true,
-    })
-  } else {
-    const dsh = lookOnPath('dsh', env)
-    if (dsh === undefined) throw new Error('cannot reconstruct `dsh plugin update`: no launch argv and no dsh on PATH')
-    result = spawnSync(dsh, ['plugin', '--profile', DEFAULT_PROFILE, 'update', '--latest'], {
-      cwd: layout.cwd || process.cwd(),
-      env,
-      encoding: 'utf8',
-      windowsHide: true,
-    })
+  const snap = snapshotProfileManifests(paths, layout)
+  try {
+    let result
+    if (argv !== undefined) {
+      result = await runLoggedCommand(paths, node, argv, {
+        cwd: layout.cwd || process.cwd(),
+        env,
+        label: 'plugin update',
+      })
+    } else {
+      const dsh = lookOnPath('dsh', env)
+      if (dsh === undefined) throw new Error('cannot reconstruct `dsh plugin update`: no launch argv and no dsh on PATH')
+      result = await runLoggedCommand(paths, dsh, ['plugin', '--profile', DEFAULT_PROFILE, 'update', '--latest'], {
+        cwd: layout.cwd || process.cwd(),
+        env,
+        label: 'plugin update',
+      })
+    }
+    if (result.status !== 0) {
+      throw new Error(`plugin update failed (exit ${result.status ?? '?'})`)
+    }
+    clearRollbackDir(snap.snapRoot)
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    try {
+      await restoreProfileManifests(paths, snap, env)
+      clearRollbackDir(snap.snapRoot)
+    } catch (rollbackError) {
+      const rb = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      throw new Error(`plugin upgrade failed: ${detail}; rollback failed: ${rb}`)
+    }
+    throw new Error(`plugin upgrade failed (restored to pre-update state): ${detail}`)
   }
-  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
-  if (output) {
-    const tail = output.trim().split('\n').slice(-40)
-    logSupervisor(paths, tail.join('\n'))
-    for (const line of tail) appendJobLog(paths, line)
+}
+
+async function updateDsh(paths, layout) {
+  const classified = classifyHarness(layout, harnessFs)
+  appendJobLog(paths, `DSH install: ${classified.kind}${classified.npx ? ' (npx)' : ''}`)
+  const plan = dshUpdatePlan(layout, classified, harnessFs)
+  if (plan.error) throw new Error(plan.error)
+  const env = envForOneShot(layout)
+  logSupervisor(paths, `updating DSH (${plan.kind})`)
+  appendJobLog(paths, `updating DSH (${plan.kind})…`)
+
+  const gitRoot = classified.gitRoot || classified.root
+  const preLayout = cloneLayout(readLayout(paths) ?? layout)
+  let preSha = ''
+  let preNpmVersion = ''
+  let headMoved = false
+  let mutateStarted = false
+
+  if (plan.kind === 'git') {
+    if (!gitRoot) throw new Error('missing git root')
+    preSha = await captureGitHead(paths, gitRoot, env)
+    appendJobLog(paths, `pre-update HEAD ${preSha.slice(0, 7)}`)
+  } else if (plan.kind === 'npm') {
+    const cliPkgRoot = classified.cliPkgRoot || classified.root
+    preNpmVersion = readPackageVersion(join(cliPkgRoot, 'package.json'))
+    if (preNpmVersion) appendJobLog(paths, `pre-update ${DSH_PACKAGE}@${preNpmVersion}`)
+  }
+
+  try {
+    let pullStdout = ''
+    for (const step of plan.steps || []) {
+      if (step.optionalUnlessNeeded === true) {
+        const decision = gitClientBuildNeeded(gitRoot, harnessFs, pullStdout)
+        if (!decision.needed) {
+          appendJobLog(paths, `skip ${step.label}: ${decision.reason}`)
+          logSupervisor(paths, `skip ${step.label}: ${decision.reason}`)
+          continue
+        }
+        appendJobLog(paths, `build needed: ${decision.reason}`)
+      }
+      const result = await runRecipeStep(paths, step, env)
+      if (step.capturesPull === true) {
+        pullStdout = String(result?.stdout ?? '')
+        headMoved = gitPullBroughtCommits(pullStdout)
+        if (headMoved) mutateStarted = true
+      } else if (step.expectEmptyStdout !== true) {
+        mutateStarted = true
+      }
+    }
+    if (plan.refreshLayout === true) {
+      mutateStarted = true
+      return refreshLayoutEntry(paths, layout)
+    }
+    return layout
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    if (!mutateStarted && !headMoved) {
+      throw error
+    }
+    try {
+      if (plan.kind === 'git' && preSha) {
+        const current = await captureGitHead(paths, gitRoot, env).catch(() => '')
+        if (current && current !== preSha) {
+          await rollbackGitCheckout(paths, gitRoot, env, preSha)
+        } else {
+          appendJobLog(paths, 'HEAD unchanged; reinstalling deps to repair node_modules…')
+          await runRecipeStep(paths, {
+            tool: 'pnpm',
+            args: ['install'],
+            cwd: gitRoot,
+            label: 'pnpm install (repair)',
+          }, env)
+        }
+      } else if (plan.kind === 'npm') {
+        await rollbackNpmDsh(paths, plan, env, preNpmVersion, preLayout)
+      }
+    } catch (rollbackError) {
+      const rb = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      throw new Error(`upgrade failed: ${detail}; rollback failed: ${rb}`)
+    }
+    throw new Error(`upgrade failed (restored to pre-update state): ${detail}`)
+  }
+}
+
+function resolveTool(tool, env) {
+  const found = lookOnPath(tool, env) || (process.platform === 'win32' ? lookOnPath(`${tool}.cmd`, env) : undefined)
+  if (found === undefined) throw new Error(`${tool} was not found on PATH`)
+  return found
+}
+
+/** Stream a child process into job.log so the panel can poll progress live. */
+function runLoggedCommand(paths, file, args, options = {}) {
+  const label = options.label || file
+  return new Promise((resolve, reject) => {
+    let child
+    try {
+      child = spawn(file, args || [], {
+        cwd: options.cwd || process.cwd(),
+        env: options.env || process.env,
+        windowsHide: true,
+        shell: options.shell === true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch (error) {
+      reject(error)
+      return
+    }
+    let stdout = ''
+    let stderr = ''
+    let lineBuf = ''
+    const onChunk = (chunk, stream) => {
+      const text = String(chunk)
+      if (stream === 'stdout') stdout += text
+      else stderr += text
+      lineBuf += text
+      const parts = lineBuf.split(/\r?\n/)
+      lineBuf = parts.pop() ?? ''
+      for (const line of parts) {
+        const trimmed = line.trimEnd()
+        if (trimmed.length === 0) continue
+        appendJobLog(paths, trimmed)
+        logSupervisor(paths, trimmed)
+      }
+    }
+    child.stdout?.on('data', (chunk) => onChunk(chunk, 'stdout'))
+    child.stderr?.on('data', (chunk) => onChunk(chunk, 'stderr'))
+    child.on('error', reject)
+    child.on('close', (status) => {
+      if (lineBuf.trim().length > 0) {
+        appendJobLog(paths, lineBuf.trimEnd())
+        logSupervisor(paths, lineBuf.trimEnd())
+      }
+      resolve({ status: status ?? 1, stdout, stderr, label })
+    })
+  })
+}
+
+async function runRecipeStep(paths, step, env) {
+  appendJobLog(paths, step.label || `${step.tool} ${(step.args || []).join(' ')}`)
+  logSupervisor(paths, step.label || step.tool)
+  const file = resolveTool(step.tool, env)
+  const result = await runLoggedCommand(paths, file, step.args || [], {
+    cwd: step.cwd || process.cwd(),
+    env,
+    shell: process.platform === 'win32' && /\.cmd$/i.test(file),
+    label: step.label || step.tool,
+  })
+  if (step.expectEmptyStdout === true) {
+    const porcelain = String(result.stdout ?? '').trim()
+    if (result.status !== 0) {
+      throw new Error(`${step.label || step.tool} failed (exit ${result.status ?? '?'})`)
+    }
+    if (porcelain.length > 0) {
+      throw new Error('git working tree is dirty; commit or stash before updating DSH')
+    }
+    return result
   }
   if (result.status !== 0) {
-    throw new Error(`plugin update failed (exit ${result.status ?? '?'})`)
+    const detail = String(result.stderr || result.stdout || '').trim().split(/\r?\n/).slice(-8).join('\n')
+    throw new Error(
+      detail
+        ? `${step.label || step.tool} failed (exit ${result.status ?? '?'}):\n${detail}`
+        : `${step.label || step.tool} failed (exit ${result.status ?? '?'})`,
+    )
   }
+  return result
+}
+
+function refreshLayoutEntry(paths, layout) {
+  const node = layout.node || process.execPath
+  const env = envForOneShot(layout)
+  const roots = []
+  if (typeof layout.cwd === 'string' && layout.cwd.trim()) roots.push(layout.cwd.trim())
+  try {
+    const npm = resolveTool('npm', env)
+    const rootRun = spawnSync(npm, ['root', '-g'], {
+      encoding: 'utf8',
+      windowsHide: true,
+      shell: process.platform === 'win32' && /\.cmd$/i.test(npm),
+      env,
+    })
+    if (rootRun.status === 0) {
+      const globalRoot = String(rootRun.stdout || '').trim()
+      if (globalRoot) roots.push(globalRoot)
+    }
+  } catch { /* optional */ }
+  const probe = `
+    const { createRequire } = require('node:module');
+    const { dirname, join } = require('node:path');
+    const roots = ${JSON.stringify(roots)};
+    let last = '';
+    for (const root of roots) {
+      try {
+        const req = createRequire(join(root, 'package.json'));
+        const pkg = req.resolve(${JSON.stringify(`${DSH_PACKAGE}/package.json`)});
+        process.stdout.write(join(dirname(pkg), 'lib', 'bin.js'));
+        process.exit(0);
+      } catch (error) {
+        last = String(error && error.message || error);
+      }
+    }
+    process.stderr.write(last || 'not found');
+    process.exit(1);
+  `
+  const result = spawnSync(node, ['-e', probe], {
+    cwd: layout.cwd || process.cwd(),
+    env,
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  if (result.status !== 0) {
+    throw new Error(`cannot resolve ${DSH_PACKAGE} after upgrade: ${(result.stderr || '').trim() || 'unknown error'}`)
+  }
+  const nextEntry = String(result.stdout || '').trim()
+  if (!nextEntry || !existsSync(nextEntry)) {
+    throw new Error(`resolved ${DSH_PACKAGE} entry is missing after upgrade`)
+  }
+  const args = Array.isArray(layout.args) ? layout.args.slice() : []
+  if (args[0] === nextEntry) return layout
+  args[0] = nextEntry
+  const next = {
+    ...layout,
+    args: withNoOpen(args),
+    execArgv: [],
+  }
+  writeLayout(paths, next)
+  appendJobLog(paths, `layout entry → ${nextEntry}`)
+  return next
+}
+
+function resetAppWebViewData(paths) {
+  // Prefer rotating the profile directory: Windows WebView2 often keeps locks
+  // on the active `app/` tree, so rmSync fails with EPERM and the next open
+  // reuses a poisoned SPA cache (sidebar ok, conversation blank).
+  const genPath = join(paths.root, 'app.gen')
+  let gen = Number.parseInt(String(readText(genPath) || '0'), 10)
+  if (!Number.isFinite(gen) || gen < 0) gen = 0
+  gen += 1
+  writeText(genPath, `${gen}\n`)
+  const keep = `app-${gen}`
+  mkdirSync(join(paths.root, keep), { recursive: true })
+  appendJobLog(paths, `page window profile → ${keep}`)
+  for (const name of readdirSync(paths.root)) {
+    if (name === keep || name === 'app.gen') continue
+    if (name === 'app' || /^app-\d+$/.test(name)) {
+      try {
+        rmSync(join(paths.root, name), { recursive: true, force: true })
+      } catch (error) {
+        logSupervisor(paths, `app cache clear ${name}: ${error instanceof Error ? error.message : error}`)
+      }
+    }
+  }
+  return join(paths.root, keep)
+}
+
+function currentAppDataDir(paths) {
+  const gen = Number.parseInt(String(readText(join(paths.root, 'app.gen')) || '0'), 10)
+  if (Number.isFinite(gen) && gen > 0) {
+    const dir = join(paths.root, `app-${gen}`)
+    mkdirSync(dir, { recursive: true })
+    return dir
+  }
+  const fallback = join(paths.root, 'app')
+  mkdirSync(fallback, { recursive: true })
+  return fallback
 }
 
 async function ensureSupervisor(paths, layout, cliFile) {
@@ -1206,57 +1749,124 @@ async function performAction(action, options = {}) {
     const fromHost = options.fromHost === true
     const prefs = readPanelPrefs(paths)
     const open = shouldOpenUi(action, options, prefs)
+    /** Set when a *-restart upgrade fails but we still attempt to bring the host back. */
+    let updateError = null
     if (trackJob) beginJob(paths, action, `running ${action}`)
     if (fromHost && action !== 'start') await sleep(400)
     if (action === 'open') {
-      const result = openDshUi(paths, layout)
+      const result = await openDshUiAsync(paths, layout, { resetCache: true })
       if (trackJob) endJob(paths, 'ok', 'UI opened')
       return { ok: true, action, ...result }
     }
 
     if (action === 'update') {
+      if (await isWebListening(layout)) {
+        throw new Error('stop DSH before updating plugins (or use update-stop / update-restart)')
+      }
       await updatePlugins(paths, readLayout(paths) ?? layout)
-      if (trackJob) endJob(paths, 'ok', 'update finished')
+      if (trackJob) endJob(paths, 'ok', 'plugin update finished')
       return { ok: true, action }
     }
 
-    if (action === 'stop' || action === 'restart' || action === 'update-stop' || action === 'update-restart') {
-      if (action === 'stop' || action === 'update-stop') await requestAppWindowClose(layout)
+    if (action === 'update-dsh') {
+      if (await isWebListening(layout)) {
+        throw new Error('stop DSH before updating the harness (or use update-dsh-stop / update-dsh-restart)')
+      }
+      await requestAppWindowClose(layout)
+      await sleep(300)
+      await updateDsh(paths, readLayout(paths) ?? layout)
+      resetAppWebViewData(paths)
+      if (trackJob) endJob(paths, 'ok', 'DSH update finished')
+      return { ok: true, action }
+    }
+
+    const stops = action === 'stop' || action === 'restart'
+      || action === 'update-stop' || action === 'update-restart'
+      || action === 'update-dsh-stop' || action === 'update-dsh-restart'
+    if (stops) {
+      // Always close the page window before tearing the host down. Leaving it
+      // open across a restart/update leaves a half-dead SPA (blank conversation).
+      await requestAppWindowClose(layout)
+      // WebView2 releases profile locks shortly after close; then drop the
+      // persistent cache so the next open does a clean token→cookie→/ hop.
+      await sleep(300)
+      resetAppWebViewData(paths)
       appendJobLog(paths, 'stopping DSH…')
       await requestSupervisorStop(paths, layout)
     }
 
     if (action === 'update-stop' || action === 'update-restart') {
-      await updatePlugins(paths, readLayout(paths) ?? layout)
+      try {
+        await updatePlugins(paths, readLayout(paths) ?? layout)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        if (action !== 'update-restart') {
+          throw new Error(`service stopped; plugin upgrade failed: ${detail}`)
+        }
+        appendJobLog(paths, `plugin upgrade failed after restore; still restarting: ${detail}`)
+        logSupervisor(paths, `plugin upgrade failed after restore; still restarting: ${detail}`)
+        updateError = detail
+      }
     }
 
-    if (action === 'start' || action === 'restart' || action === 'update-restart') {
+    if (action === 'update-dsh-stop' || action === 'update-dsh-restart') {
+      try {
+        await updateDsh(paths, readLayout(paths) ?? layout)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        if (action !== 'update-dsh-restart') {
+          throw new Error(`service stopped; DSH upgrade failed: ${detail}`)
+        }
+        appendJobLog(paths, `DSH upgrade failed after restore; still restarting: ${detail}`)
+        logSupervisor(paths, `DSH upgrade failed after restore; still restarting: ${detail}`)
+        updateError = detail
+      }
+    }
+
+    if (action === 'start' || action === 'restart'
+      || action === 'update-restart' || action === 'update-dsh-restart') {
       removeFile(paths.stopping)
-      const listening = await isWebListening(layout)
+      const liveLayout = readLayout(paths) ?? layout
+      const listening = await isWebListening(liveLayout)
       if (listening && action === 'start') {
-        let ok = await requestHostAdoptSupervisor(layout)
-        if (!ok) ok = await ensureSupervisor(paths, layout, options.cliFile)
+        let ok = await requestHostAdoptSupervisor(liveLayout)
+        if (!ok) ok = await ensureSupervisor(paths, liveLayout, options.cliFile)
         if (!ok) throw new Error('supervisor did not start')
-        const url = await waitWebReady(paths, layout, Math.min(options.timeoutMs ?? 120000, 15000))
-          ?? readWebUrl(paths, layout)
-        if (open) openDshUi(paths, layout)
+        const url = await waitWebReady(paths, liveLayout, Math.min(options.timeoutMs ?? 120000, 15000))
+        if (url === undefined) throw new Error('DSH did not become ready')
+        if (open) await openDshUiAsync(paths, liveLayout, { resetCache: true })
         if (trackJob) endJob(paths, 'ok', 'already running')
         return { ok: true, action, url, skipped: true }
       }
       appendJobLog(paths, 'starting host…')
-      const ok = await ensureSupervisor(paths, layout, options.cliFile)
-      if (!ok) throw new Error('supervisor did not start')
-      const url = await waitWebReady(paths, layout, options.timeoutMs ?? 120000)
-      if (url === undefined) throw new Error('DSH did not become ready')
-      if (open) openDshUi(paths, layout)
-      if (trackJob) endJob(paths, 'ok', 'ready')
-      return { ok: true, action, url }
+      try {
+        const ok = await ensureSupervisor(paths, liveLayout, options.cliFile)
+        if (!ok) throw new Error('supervisor did not start')
+        const url = await waitWebReady(paths, liveLayout, options.timeoutMs ?? 120000)
+        if (url === undefined) throw new Error('DSH did not become ready')
+        if (open) await openDshUiAsync(paths, liveLayout, { resetCache: true })
+        if (updateError) {
+          const message = `service restored; upgrade failed: ${updateError}`
+          if (trackJob) endJob(paths, 'error', 'service restored; upgrade failed', updateError)
+          const err = new Error(message)
+          err.code = 'UPDATE_FAILED_SERVICE_RESTORED'
+          throw err
+        }
+        if (trackJob) endJob(paths, 'ok', 'ready')
+        return { ok: true, action, url }
+      } catch (error) {
+        if (updateError && error?.code !== 'UPDATE_FAILED_SERVICE_RESTORED') {
+          const startDetail = error instanceof Error ? error.message : String(error)
+          throw new Error(`upgrade failed and service did not start: upgrade=${updateError}; start=${startDetail}`)
+        }
+        throw error
+      }
     }
 
     if (trackJob) endJob(paths, 'ok', 'done')
     return { ok: true, action }
   } catch (error) {
-    if (trackJob) {
+    if (trackJob && error?.code !== 'UPDATE_FAILED_SERVICE_RESTORED') {
       endJob(paths, 'error', 'failed', error instanceof Error ? error.message : String(error))
     }
     throw error
@@ -1343,6 +1953,18 @@ async function runSupervisor(options = {}) {
         }
         if (stopRequested || existsSync(paths.stopping)) break
         logSupervisor(paths, `host pid=${existingPid} exited; restarting`)
+      } else if (await isWebListening(current)) {
+        // Port held but our pid file is stale/empty — never spawn a twin host.
+        logSupervisor(paths, `web port ${current.port || DEFAULT_PORT} is busy without a recorded pid; waiting`)
+        while (
+          await isWebListening(current)
+          && !stopRequested
+          && !existsSync(paths.stopping)
+        ) {
+          await sleep(1000)
+          writeText(paths.keepalive, new Date().toISOString())
+        }
+        if (stopRequested || existsSync(paths.stopping)) break
       } else {
         try {
           childProc = await startHostProcess(paths, current)
@@ -1405,6 +2027,7 @@ export {
   installDesktopLauncher,
   installPanelEntry,
   isWebListening,
+  isTokenizedWebUrl,
   killPid,
   launcherBody,
   launcherFileName,
@@ -1414,6 +2037,7 @@ export {
   lookOnPath,
   mergeLayout,
   openDshUi,
+  openDshUiAsync,
   openUrl,
   packagePanelDir,
   performAction,
@@ -1426,9 +2050,12 @@ export {
   readText,
   readWebUrl,
   releaseSupervisor,
+  removeFile,
   requestHostAdoptSupervisor,
   requestStopFiles,
   requestSupervisorStop,
+  resetAppWebViewData,
+  currentAppDataDir,
   resolveHome,
   runSupervisor,
   sendControl,
@@ -1440,10 +2067,12 @@ export {
   statePaths,
   supervisorAlive,
   updatePlugins,
+  updateDsh,
   waitPidGone,
   waitWebReady,
   writeJob,
   writeLayout,
   writePanelPrefs,
   writePidFile,
+  writeText,
 }

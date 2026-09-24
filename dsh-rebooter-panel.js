@@ -11,27 +11,56 @@ import http from 'node:http'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import {
-  DEFAULT_HOST, DEFAULT_PORT, availableActions, captureLaunch, panelPort,
+  DEFAULT_HOST, DEFAULT_PORT, DEFAULT_PROFILE, availableActions, captureLaunch, isAction, panelPort,
 } from './dsh-rebooter-core.js'
 import {
-  cliPathFromHost, ensureStateDir, installPanelEntry, isWebListening,
-  logSupervisor, openDshUi, openUrl, performAction, readJob, readLayout,
-  readPanelPrefs, readText, readWebUrl, spawnDetached, statePaths, writePanelPrefs,
+  cliPathFromHost, currentAppDataDir, dispatchCli, ensureStateDir, installPanelEntry, isTokenizedWebUrl, isWebListening,
+  logSupervisor, openDshUi, openDshUiAsync, openUrl, readJob, readLayout,
+  readPanelPrefs, readText, readWebUrl, removeFile, resetAppWebViewData, sleep, spawnDetached,
+  statePaths, writePanelPrefs, writePidFile,
 } from './dsh-rebooter-runtime.js'
 
-function readUserAppearance(home) {
+function parseQuotedYamlScalar(raw) {
+  let value = String(raw ?? '').trim()
+  if (
+    (value.startsWith('"') && value.endsWith('"'))
+    || (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    value = value.slice(1, -1)
+  }
+  const comment = value.indexOf(' #')
+  if (comment >= 0) value = value.slice(0, comment).trim()
+  return value
+}
+
+/** Current DSH persists locale / ui-theme in the profile patch, not settings.yaml. */
+function readAppearanceFromPatch(text) {
   const found = { locale: '', theme: 'system' }
-  if (typeof home !== 'string' || home.length === 0) return found
-  let text = ''
-  for (const name of ['settings.yaml', 'settings.yml']) {
-    try {
-      text = readFileSync(join(home, name), 'utf8')
-      break
-    } catch {
-      text = ''
+  if (typeof text !== 'string' || text.length === 0) return found
+  let id = ''
+  for (const raw of text.split('\n')) {
+    const idMatch = /^- id:\s*(\S+)\s*$/.exec(raw)
+    if (idMatch) {
+      id = idMatch[1]
+      continue
+    }
+    if (id !== 'locale' && id !== 'ui-theme') continue
+    const pref = /^\s+preference:\s*(.+)\s*$/.exec(raw)
+    if (!pref) continue
+    const value = parseQuotedYamlScalar(pref[1])
+    if (id === 'locale') {
+      if (value === 'zh' || value === 'en') found.locale = value
+    } else if (value === 'light' || value === 'dark' || value === 'system') {
+      found.theme = value
     }
   }
-  if (!text) return found
+  return found
+}
+
+/** Legacy `$DSH_HOME/settings.yaml` shape kept as a one-release fallback. */
+function readAppearanceFromLegacySettings(text) {
+  const found = { locale: '', theme: 'system' }
+  if (typeof text !== 'string' || text.length === 0) return found
   let section = ''
   for (const raw of text.split('\n')) {
     if (raw.length === 0 || raw.startsWith('#')) continue
@@ -43,16 +72,30 @@ function readUserAppearance(home) {
     if (section !== 'locale' && section !== 'ui-theme') continue
     const line = raw.trim()
     if (!line.startsWith('preference:')) continue
-    let value = line.slice('preference:'.length).trim()
-    if (value.length >= 2 && ((value[0] === '"' && value.endsWith('"')) || (value[0] === "'" && value.endsWith("'")))) {
-      value = value.slice(1, -1)
+    const value = parseQuotedYamlScalar(line.slice('preference:'.length))
+    if (section === 'locale') {
+      if (value === 'zh' || value === 'en') found.locale = value
+    } else if (value === 'light' || value === 'dark' || value === 'system') {
+      found.theme = value
     }
-    const comment = value.indexOf(' #')
-    if (comment >= 0) value = value.slice(0, comment).trim()
-    if (section === 'locale') found.locale = value === 'zh' || value === 'en' ? value : ''
-    else if (value === 'light' || value === 'dark' || value === 'system') found.theme = value
   }
   return found
+}
+
+function readUserAppearance(home, profile = DEFAULT_PROFILE) {
+  const fallback = { locale: '', theme: 'system' }
+  if (typeof home !== 'string' || home.length === 0) return fallback
+  const profileId = typeof profile === 'string' && profile.trim() ? profile.trim() : DEFAULT_PROFILE
+  try {
+    const patch = readFileSync(join(home, 'profiles', profileId, 'cordis.patch.yml'), 'utf8')
+    return readAppearanceFromPatch(patch)
+  } catch { /* fall through to legacy settings.yaml */ }
+  for (const name of ['settings.yaml', 'settings.yml']) {
+    try {
+      return readAppearanceFromLegacySettings(readFileSync(join(home, name), 'utf8'))
+    } catch { /* try next */ }
+  }
+  return fallback
 }
 
 async function buildSnapshot(paths, layout) {
@@ -63,7 +106,18 @@ async function buildSnapshot(paths, layout) {
   const actions = busy ? [] : availableActions(running)
   const url = readWebUrl(paths, layout)
   const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
-  return { running, job, prefs, actions, url, panelPort: port, appearance: readUserAppearance(dirname(paths.root)) }
+  const home = typeof layout?.dshHome === 'string' && layout.dshHome.trim()
+    ? layout.dshHome.trim()
+    : dirname(paths.root)
+  return {
+    running,
+    job,
+    prefs,
+    actions,
+    url,
+    panelPort: port,
+    appearance: readUserAppearance(home, layout?.profile),
+  }
 }
 
 function panelPageHtml() {
@@ -116,7 +170,6 @@ html, body { background: var(--bg); color: var(--text); font: 14px/22px var(--fo
   height: 40px; padding: 0 8px 0 14px; background: var(--bg);
   border-bottom: 1px solid var(--border); user-select: none; cursor: default;
 }
-.titlebar:active { cursor: grabbing; }
 .titlebar span { font-weight: 600; font-size: 13px; line-height: 20px; }
 .winbtns { display: flex; gap: 1px; }
 .winbtns button {
@@ -144,7 +197,9 @@ main { display: flex; flex-direction: column; padding: 12px; gap: 10px; }
 }
 .status.busy .spinner { display: block; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions { display: flex; flex-direction: column; gap: 10px; }
+.action-row, .action-group-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.action-group-title { font-size: 11px; line-height: 16px; color: var(--muted); letter-spacing: 0.02em; }
 .actions button {
   padding: 7px 14px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--surface); color: var(--text); cursor: pointer; font: inherit;
@@ -279,12 +334,18 @@ const COPY = {
     'ok': '确定',
     'cancel': '取消',
     'start': '开启服务',
-    'update': '更新',
-    'update-start': '更新并开启服务',
-    'update-restart': '更新并重启服务',
+    'update': '更新插件',
+    'update-start': '更新插件并开启服务',
+    'update-restart': '更新插件并重启服务',
     'stop': '关闭服务',
     'restart': '重启服务',
-    'update-stop': '更新并关闭服务',
+    'update-stop': '更新插件并关闭服务',
+    'update-dsh': '更新 DSH',
+    'update-dsh-start': '更新 DSH 并开启服务',
+    'update-dsh-restart': '更新 DSH 并重启服务',
+    'update-dsh-stop': '更新 DSH 并关闭服务',
+    'groupPlugins': '插件',
+    'groupDsh': 'DSH',
     'desktop': '放到桌面',
     'desktopDone': '已放到桌面',
   },
@@ -306,12 +367,18 @@ const COPY = {
     'ok': 'OK',
     'cancel': 'Cancel',
     'start': 'Start service',
-    'update': 'Update',
-    'update-start': 'Update and start service',
-    'update-restart': 'Update and restart service',
+    'update': 'Update plugins',
+    'update-start': 'Update plugins and start service',
+    'update-restart': 'Update plugins and restart service',
     'stop': 'Stop service',
     'restart': 'Restart service',
-    'update-stop': 'Update and stop service',
+    'update-stop': 'Update plugins and stop service',
+    'update-dsh': 'Update DSH',
+    'update-dsh-start': 'Update DSH and start service',
+    'update-dsh-restart': 'Update DSH and restart service',
+    'update-dsh-stop': 'Update DSH and stop service',
+    'groupPlugins': 'Plugins',
+    'groupDsh': 'DSH',
     'desktop': 'Put on Desktop',
     'desktopDone': 'Shortcut is on the Desktop',
   },
@@ -322,6 +389,7 @@ const COPY = {
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   function labelFor(action, running) {
     if (action === 'update-restart') return running ? t['update-restart'] : t['update-start'];
+    if (action === 'update-dsh-restart') return running ? t['update-dsh-restart'] : t['update-dsh-start'];
     return t[action] || action;
   }
   const $ = (id) => document.getElementById(id);
@@ -406,15 +474,19 @@ const COPY = {
 
   function renderStatus(s) {
     const job = s.job || {};
-    const busy = job.state === 'busy';
-    const err = job.state === 'error';
+    const busy = job.state === 'busy' || pendingAction !== null;
+    const err = !busy && job.state === 'error';
     statusStrip.classList.toggle('running', s.running === true && !busy);
     statusStrip.classList.toggle('busy', busy);
     statusStrip.classList.toggle('error', err);
     let text = '';
-    if (busy) text = job.action ? labelFor(job.action, s.running === true) : t.working;
-    else if (err) text = t.failed;
-    else if (Date.now() < desktopNoteUntil) text = t.desktopDone;
+    if (busy) {
+      const action = pendingAction || job.action;
+      text = action ? labelFor(action, s.running === true) : t.working;
+    } else if (err) {
+      const detail = typeof job.error === 'string' ? job.error.trim() : '';
+      text = detail ? detail : t.failed;
+    } else if (Date.now() < desktopNoteUntil) text = t.desktopDone;
     else if (s.running) text = t.running;
     else text = t.stopped;
     statusText.textContent = text;
@@ -426,20 +498,57 @@ const COPY = {
     }
   }
 
+  let actionsSig = '';
   function renderActions(s) {
-    actionsEl.innerHTML = '';
     const list = Array.isArray(s.actions) ? s.actions : [];
-    const busy = s.job && s.job.state === 'busy';
-    for (const action of list) {
-      if (action === 'open') continue;
+    const busy = (s.job && s.job.state === 'busy') || pendingAction !== null;
+    const sig = lang + '|' + (s.running === true ? '1' : '0') + '|' + (busy ? '1' : '0') + '|' + list.join(',');
+    if (sig === actionsSig) {
+      const buttons = actionsEl.querySelectorAll('button[data-action]');
+      for (let i = 0; i < buttons.length; i++) buttons[i].disabled = busy;
+      return;
+    }
+    actionsSig = sig;
+    actionsEl.innerHTML = '';
+    const serviceIds = new Set(['stop', 'restart', 'start']);
+    const pluginIds = new Set(['update', 'update-stop', 'update-restart']);
+    const dshIds = new Set(['update-dsh', 'update-dsh-stop', 'update-dsh-restart']);
+    function makeButton(action) {
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.dataset.action = action;
       btn.textContent = labelFor(action, s.running === true);
       btn.disabled = busy;
-      btn.onclick = () => void runAction(action);
       if (action === 'start' || action === 'restart') btn.classList.add('primary');
-      actionsEl.appendChild(btn);
+      return btn;
     }
+    function appendRow(ids) {
+      const items = list.filter((action) => ids.has(action));
+      if (items.length === 0) return null;
+      const row = document.createElement('div');
+      row.className = 'action-row';
+      for (const action of items) row.appendChild(makeButton(action));
+      return row;
+    }
+    function appendGroup(titleKey, ids) {
+      const items = list.filter((action) => ids.has(action));
+      if (items.length === 0) return;
+      const group = document.createElement('div');
+      group.className = 'action-group';
+      const title = document.createElement('div');
+      title.className = 'action-group-title';
+      title.textContent = t[titleKey] || titleKey;
+      group.appendChild(title);
+      const row = document.createElement('div');
+      row.className = 'action-group-row';
+      for (const action of items) row.appendChild(makeButton(action));
+      group.appendChild(row);
+      actionsEl.appendChild(group);
+    }
+    const service = appendRow(serviceIds);
+    if (service) actionsEl.appendChild(service);
+    appendGroup('groupPlugins', pluginIds);
+    appendGroup('groupDsh', dshIds);
   }
 
   function renderPrefs(s) {
@@ -448,13 +557,30 @@ const COPY = {
     const bound = typeof p.openApp === 'string' && p.openApp.length > 0;
     btnGear.classList.toggle('hidden', bound);
     btnClearApp.classList.toggle('hidden', !bound);
-    openRow.style.opacity = s.running === false && !(s.job && s.job.state === 'busy') ? '1' : '1';
   }
 
+  let pendingAction = null;
+  actionsEl.addEventListener('click', (event) => {
+    const btn = event.target && event.target.closest ? event.target.closest('button[data-action]') : null;
+    if (!btn || btn.disabled) return;
+    const action = btn.dataset.action;
+    if (action) void runAction(action);
+  });
+
   async function runAction(action) {
-    const { ok, status, data } = await postJson('/api/action', { action });
-    if (status === 409) statusText.textContent = t.busy;
-    else if (!ok && data.error) statusText.textContent = data.error;
+    if (pendingAction) return;
+    pendingAction = action;
+    if (lastSnapshot) renderStatus(lastSnapshot);
+    if (lastSnapshot) renderActions(lastSnapshot);
+    try {
+      const { ok, status, data } = await postJson('/api/action', { action });
+      if (status === 409) statusText.textContent = t.busy;
+      else if (!ok && data && data.error) statusText.textContent = data.error;
+    } catch (error) {
+      statusText.textContent = error instanceof Error ? error.message : String(error);
+    } finally {
+      pendingAction = null;
+    }
   }
 
   async function refreshLog() {
@@ -481,7 +607,10 @@ const COPY = {
     t = COPY[lang] || COPY.en;
     document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
     applyTheme(nextTheme);
-    if (changed) applyChrome();
+    if (changed) {
+      actionsSig = '';
+      applyChrome();
+    }
   }
 
   async function tick() {
@@ -615,13 +744,14 @@ function sendJson(res, status, body) {
 }
 
 function runActionBackground(paths, layout, action) {
-  void (async () => {
-    try {
-      await performAction(action, {})
-    } catch {
-      /* performAction already recorded the job error */
-    }
-  })()
+  // Never run lifecycle work inside the panel HTTP process. Update recipes use
+  // long PATH-tool spawns; keeping them here freezes /api/snapshot and /api/log,
+  // so the spinner and in-window console stop updating. Match the Host path:
+  // detach cli.cjs and let the panel keep polling job.*.
+  dispatchCli(action, [], {
+    dshHome: layout?.dshHome || (paths?.root ? dirname(paths.root) : undefined),
+    cwd: layout?.cwd,
+  })
 }
 
 function panelHostAllowed(header, port) {
@@ -697,20 +827,27 @@ function startPanelServer(paths, layout, options = {}) {
       }
       if (req.method === 'POST' && path === '/api/open') {
         const prefs = readPanelPrefs(paths)
-        if (!prefs.openApp) {
-          const target = readWebUrl(paths, layout)
-          let shown = false
-          try {
-            shown = await showAppWindow(target, paths)
-          } catch (error) {
-            logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
-          }
-          if (!shown) openUrl(target)
-          sendJson(res, 200, { ok: true, url: target, window: shown })
+        if (prefs.openApp) {
+          const result = openDshUi(paths, layout)
+          sendJson(res, 200, result)
           return
         }
-        const result = openDshUi(paths, layout)
-        sendJson(res, 200, result)
+        const target = readWebUrl(paths, layout)
+        if (!target) {
+          sendJson(res, 503, { ok: false, error: 'DSH URL is not ready yet' })
+          return
+        }
+        closeAppWindow()
+        await sleep(200)
+        resetAppWebViewData(paths)
+        let shown = false
+        try {
+          shown = await showAppWindow(target, paths, { forceReload: true })
+        } catch (error) {
+          logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
+        }
+        if (!shown) openUrl(target)
+        sendJson(res, 200, { ok: true, url: target, window: shown })
         return
       }
       if (req.method === 'GET' && path === '/api/frame') {
@@ -734,9 +871,25 @@ function startPanelServer(paths, layout, options = {}) {
           sendJson(res, 200, { ok: true, closed: true })
           return
         }
-        const target = readWebUrl(paths, layout)
-        const shown = await showAppWindow(target, paths)
-        sendJson(res, shown ? 200 : 500, { ok: shown, shown })
+        let target = typeof body?.url === 'string' && body.url.length > 0
+          ? body.url
+          : readWebUrl(paths, layout)
+        if (!target || !isTokenizedWebUrl(target)) {
+          target = readWebUrl(paths, layout)
+        }
+        if (!target) {
+          sendJson(res, 503, { ok: false, error: 'DSH URL is not ready yet' })
+          return
+        }
+        const force = body?.force !== false
+        if (force) {
+          closeAppWindow()
+          await sleep(200)
+          // Rotate WebView profile even when rm of the old tree fails (EPERM).
+          resetAppWebViewData(paths)
+        }
+        const shown = await showAppWindow(target, paths, { forceReload: force })
+        sendJson(res, shown ? 200 : 500, { ok: shown, shown, url: target })
         return
       }
       if (req.method === 'POST' && path === '/api/action') {
@@ -766,10 +919,29 @@ function startPanelServer(paths, layout, options = {}) {
     server.on('error', reject)
     server.listen(port, host, () => {
       const panelUrl = `http://${host}:${port}/`
+      writePidFile(paths.panelPid, process.pid)
       logSupervisor(paths, `panel listening ${panelUrl}`)
+      const clearPid = () => {
+        try {
+          if (readPidFileSafe(paths.panelPid) === process.pid) removeFile(paths.panelPid)
+        } catch { /* ignore */ }
+      }
+      server.on('close', clearPid)
+      process.once('exit', clearPid)
       resolve({ server, port, url: panelUrl })
     })
   })
+}
+
+function readPidFileSafe(path) {
+  try {
+    const raw = readText(path)
+    if (!raw) return 0
+    const match = /pid=(\d+)/.exec(raw)
+    return match ? Number(match[1]) : 0
+  } catch {
+    return 0
+  }
 }
 
 let frameHost = null
@@ -1054,11 +1226,11 @@ async function showFrameless(url, paths, attempt = 0) {
 
 const WIN_COPY = {
   zh: {
-    title: '关闭服务、重启服务或更新 DSH',
+    title: '关闭服务、重启服务或更新插件',
     stop: '关闭服务',
     restart: '重启服务',
-    'update-stop': '更新并关闭服务',
-    'update-restart': '更新并重启服务',
+    'update-stop': '更新插件并关闭服务',
+    'update-restart': '更新插件并重启服务',
     working: '正在执行…',
     failed: '操作失败',
     min: '最小化',
@@ -1067,11 +1239,11 @@ const WIN_COPY = {
     close: '关闭',
   },
   en: {
-    title: 'Stop service, restart service, or update DSH',
+    title: 'Stop service, restart service, or update plugins',
     stop: 'Stop service',
     restart: 'Restart service',
-    'update-stop': 'Update and stop service',
-    'update-restart': 'Update and restart service',
+    'update-stop': 'Update plugins and stop service',
+    'update-restart': 'Update plugins and restart service',
     working: 'Working…',
     failed: 'Action failed',
     min: 'Minimize',
@@ -1121,8 +1293,16 @@ function appControlScript() {
   var maxOn = false;
   var hideTimer = null;
   var dragging = false;
+  var pendingDrag = null;
+  var lastTitleTap = 0;
   var moveQueued = null;
   var pumping = false;
+  // Move past slop before drag so a second tap can post 'max' (same as the button).
+  var DRAG_SLOP = 4;
+  var DBL_MS = 400;
+  // Windows → OS caption drag (Aero Snap). Elsewhere → d0/d1/d2.
+  var nativeOsDrag = /Win/i.test(String(navigator.platform || ''))
+    || /Windows NT/i.test(String(navigator.userAgent || ''));
   function post(msg) {
     if (!window.ipc || typeof window.ipc.postMessage !== 'function') return;
     window.ipc.postMessage(msg);
@@ -1133,6 +1313,28 @@ function appControlScript() {
     var msg = moveQueued;
     moveQueued = null;
     post(msg);
+  }
+  function stopCustomDrag() {
+    if (!dragging) return;
+    dragging = false;
+    moveQueued = null;
+    post('d2');
+  }
+  function toggleMax() {
+    pendingDrag = null;
+    stopCustomDrag();
+    lastTitleTap = 0;
+    post('max');
+  }
+  function beginPendingDrag(start) {
+    pendingDrag = null;
+    lastTitleTap = 0;
+    if (start.native) {
+      post('drag');
+      return;
+    }
+    dragging = true;
+    post('d0:' + start.sx + ':' + start.sy);
   }
   var forcedLocale = '';
   function phrase(key) {
@@ -1351,7 +1553,6 @@ function appControlScript() {
       if (act) { runAction(act); return; }
       var op = button.getAttribute('data-op') || '';
       if (op === 'power') { toggleMenu(); return; }
-      if (op === 'max') setMax(!maxOn);
       if (op) post(op);
     });
     document.documentElement.appendChild(bar);
@@ -1390,6 +1591,22 @@ function appControlScript() {
     return false;
   }
   document.addEventListener('pointermove', function (event) {
+    if (pendingDrag) {
+      var pdx = Math.round(event.screenX) - pendingDrag.sx;
+      var pdy = Math.round(event.screenY) - pendingDrag.sy;
+      if ((pdx * pdx) + (pdy * pdy) >= DRAG_SLOP * DRAG_SLOP) {
+        var start = pendingDrag;
+        if (!start.native) {
+          try { document.documentElement.setPointerCapture(event.pointerId); } catch (e) {}
+        }
+        beginPendingDrag(start);
+        if (dragging) {
+          moveQueued = 'd1:' + Math.round(event.screenX) + ':' + Math.round(event.screenY);
+          if (!pumping) { pumping = true; requestAnimationFrame(pumpMove); }
+        }
+      }
+      return;
+    }
     if (dragging) {
       moveQueued = 'd1:' + Math.round(event.screenX) + ':' + Math.round(event.screenY);
       if (!pumping) { pumping = true; requestAnimationFrame(pumpMove); }
@@ -1401,17 +1618,24 @@ function appControlScript() {
   document.addEventListener('pointerdown', function (event) {
     if (menuOpen && !overBar(event)) { closeMenu(); hideBarSoon(); }
     if (event.button !== 0 || event.clientY > BAND || event.clientY < 0 || interactive(event)) return;
-    dragging = true;
-    hideBarSoon();
-    try { document.documentElement.setPointerCapture(event.pointerId); } catch (e) {}
     event.preventDefault();
-    post('d0:' + Math.round(event.screenX) + ':' + Math.round(event.screenY));
+    hideBarSoon();
+    var now = Date.now();
+    // Time-based: WebView2 often keeps pointerdown.detail at 1.
+    if (lastTitleTap > 0 && now - lastTitleTap <= DBL_MS) {
+      toggleMax();
+      return;
+    }
+    lastTitleTap = now;
+    pendingDrag = {
+      sx: Math.round(event.screenX),
+      sy: Math.round(event.screenY),
+      native: nativeOsDrag,
+    };
   }, true);
   function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    moveQueued = null;
-    post('d2');
+    pendingDrag = null;
+    stopCustomDrag();
   }
   document.addEventListener('pointerup', endDrag, true);
   document.addEventListener('pointercancel', endDrag, true);
@@ -1437,7 +1661,38 @@ function ipcText(message) {
   return String(text).trim()
 }
 
-function bindShellControls(shell, webview, paths, onClose, onMax) {
+/** Ask the OS to run its native move loop (Windows Aero Snap). Other platforms: false. */
+function startOsWindowDrag(shell) {
+  if (process.platform !== 'win32' || !shell) return false
+  let hwnd
+  try {
+    hwnd = typeof shell.getNativeHandle === 'function' ? shell.getNativeHandle() : null
+  } catch {
+    return false
+  }
+  if (hwnd == null) return false
+  try {
+    // cli.cjs is CommonJS; the helper ships beside it under package/lib/.
+    const path = require('node:path')
+    const here = typeof __dirname === 'string' ? __dirname : path.dirname(process.argv[1] || '')
+    const { startCaptionDrag } = require(path.join(here, 'windows-caption-drag.cjs'))
+    return typeof startCaptionDrag === 'function' && startCaptionDrag(hwnd) === true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Shared pointer protocol for frameless shells.
+ * - Panel: custom d0/d1/d2 screen-delta move (no OS snap; no cursor change).
+ * - DSH page on Windows: `drag` → OS caption drag so Aero Snap works.
+ * - DSH page elsewhere: same d0/d1/d2 fallback as the panel.
+ */
+function bindShellControls(shell, webview, paths, onClose, onMax, options = {}) {
+  const nativeDrag = options?.nativeDrag === true
+  const onMaximizedChange = typeof options?.onMaximizedChange === 'function'
+    ? options.onMaximizedChange
+    : null
   let drag = null
   const place = (x, y) => {
     try { shell.setPosition(x, y, true) } catch { shell.setPosition(x, y) }
@@ -1449,8 +1704,18 @@ function bindShellControls(shell, webview, paths, onClose, onMax) {
       if (op === 'min') shell.setMinimized(true)
       else if (op === 'max' && onMax) onMax()
       else if (op === 'close' && onClose) onClose()
-      else if (op.startsWith('d0:')) {
-        if (typeof shell.isMaximized === 'function' && shell.isMaximized()) return
+      else if (op === 'drag') {
+        // OS move loop (Win32 caption). Falls through only when unavailable.
+        if (nativeDrag && startOsWindowDrag(shell)) {
+          drag = null
+          return
+        }
+      } else if (op.startsWith('d0:')) {
+        if (typeof shell.isMaximized === 'function' && shell.isMaximized()) {
+          // Custom-drag fallback: restore first. Native Win32 caption drag does this itself.
+          try { shell.setMaximized(false) } catch { return }
+          if (onMaximizedChange) onMaximizedChange()
+        }
         const parts = op.split(':')
         let pos = null
         try { pos = shell.getPosition(true) } catch { pos = null }
@@ -1466,11 +1731,36 @@ function bindShellControls(shell, webview, paths, onClose, onMax) {
           Math.round(drag.x + (Number(parts[1]) || 0) - drag.sx),
           Math.round(drag.y + (Number(parts[2]) || 0) - drag.sy),
         )
-      } else if (op === 'd2') drag = null
+      } else if (op === 'd2') {
+        drag = null
+      }
     } catch (error) {
       logSupervisor(paths, `window control: ${error instanceof Error ? error.message : error}`)
     }
   })
+}
+
+/** Push shell.isMaximized() to the page only when it changes (button, Aero Snap, restore). */
+function watchMaximized(shell, onChange) {
+  if (!shell || typeof onChange !== 'function') return () => {}
+  let last = null
+  const push = () => {
+    let on = false
+    try {
+      on = typeof shell.isMaximized === 'function' && shell.isMaximized() === true
+    } catch {
+      return
+    }
+    if (on === last) return
+    last = on
+    onChange(on)
+  }
+  if (typeof shell.on === 'function') {
+    shell.on('resize', push)
+    shell.on('move', push)
+  }
+  push()
+  return push
 }
 
 function liveAppWindow() {
@@ -1492,33 +1782,122 @@ function closeAppWindow() {
   return true
 }
 
-async function showAppWindow(url, paths) {
+async function showAppWindow(url, paths, options = {}) {
   if (appOpening) return appOpening
-  appOpening = showAppWindowNow(url, paths).finally(() => { appOpening = null })
+  appOpening = showAppWindowNow(url, paths, options).finally(() => { appOpening = null })
   return appOpening
 }
 
-async function showAppWindowNow(url, paths) {
+async function showAppWindowNow(url, paths, options = {}) {
   if (typeof url !== 'string' || url.length === 0) return false
+  if (options.forceReload === true) {
+    closeAppWindow()
+  }
+  const session = await exchangeBrowserAuth(url)
   const existing = liveAppWindow()
   if (existing) {
     try {
       if (typeof existing.isMinimized === 'function' && existing.isMinimized()) existing.setMinimized(false)
-      if (appHost?.url !== url && typeof appHost?.webview?.loadUrl === 'function') appHost.webview.loadUrl(url)
+      applyAuthCookies(appHost?.webview, session)
+      if (typeof appHost?.webview?.loadUrl === 'function') {
+        appHost.webview.loadUrl(session.finalUrl)
+      }
       existing.show()
       existing.focus()
-      if (appHost) appHost.url = url
-      pushAppAppearance(readUserAppearance(dirname(paths.root)))
+      if (appHost) appHost.url = session.finalUrl
+      pushAppAppearance(readUserAppearance(dirname(paths.root), readLayout(paths)?.profile))
       return true
     } catch (error) {
       logSupervisor(paths, `app window focus: ${error instanceof Error ? error.message : error}`)
       if (windowHostDied(error)) dropWindowHost()
     }
   }
-  return openAppShell(url, paths, 0)
+  return openAppShell(session.finalUrl, paths, 0, session)
 }
 
-async function openAppShell(url, paths, attempt) {
+/**
+ * DSH browser auth: GET ?token=… → 303 Location:./ + Set-Cookie (HttpOnly,
+ * SameSite=Strict). WebView2 often fails that hop (blank shell, sidebar may
+ * still paint from cache). Exchange in Node, inject the cookie, open `/`.
+ */
+async function exchangeBrowserAuth(tokenizedUrl) {
+  const fallback = { finalUrl: tokenizedUrl, cookies: [] }
+  if (typeof tokenizedUrl !== 'string' || tokenizedUrl.length === 0) return fallback
+  try {
+    const parsed = new URL(tokenizedUrl)
+    if (!parsed.searchParams.get('token')) {
+      return { finalUrl: tokenizedUrl, cookies: [] }
+    }
+    const response = await fetch(tokenizedUrl, { redirect: 'manual' })
+    const setCookies = typeof response.headers.getSetCookie === 'function'
+      ? response.headers.getSetCookie()
+      : []
+    const cookies = []
+    for (const line of setCookies) {
+      const cookie = parseSetCookieLine(line, tokenizedUrl)
+      if (cookie) cookies.push(cookie)
+    }
+    let finalUrl = `${parsed.origin}/`
+    const location = response.headers.get('location')
+    if (location) {
+      try { finalUrl = new URL(location, tokenizedUrl).href } catch { /* keep origin/ */ }
+    }
+    if (cookies.length === 0 && response.status >= 200 && response.status < 400) {
+      return { finalUrl: tokenizedUrl, cookies: [] }
+    }
+    return { finalUrl, cookies }
+  } catch {
+    return fallback
+  }
+}
+
+function parseSetCookieLine(line, pageUrl) {
+  if (typeof line !== 'string' || line.length === 0) return null
+  const parts = line.split(';').map((part) => part.trim()).filter(Boolean)
+  if (parts.length === 0) return null
+  const eq = parts[0].indexOf('=')
+  if (eq <= 0) return null
+  let host = '127.0.0.1'
+  try { host = new URL(pageUrl).hostname } catch { /* default */ }
+  const cookie = {
+    name: parts[0].slice(0, eq),
+    value: parts[0].slice(eq + 1),
+    domain: host,
+    path: '/',
+    httpOnly: false,
+    secure: false,
+    sameSite: 'strict',
+  }
+  for (const attr of parts.slice(1)) {
+    const lower = attr.toLowerCase()
+    if (lower === 'httponly') cookie.httpOnly = true
+    else if (lower === 'secure') cookie.secure = true
+    else if (lower.startsWith('path=')) cookie.path = attr.slice(5) || '/'
+    else if (lower.startsWith('domain=')) cookie.domain = attr.slice(7) || host
+    else if (lower.startsWith('samesite=')) cookie.sameSite = attr.slice(9).toLowerCase()
+  }
+  return cookie
+}
+
+function applyAuthCookies(webview, session) {
+  if (!webview || !session || !Array.isArray(session.cookies)) return
+  for (const cookie of session.cookies) {
+    try {
+      if (typeof webview.deleteCookie === 'function') {
+        webview.deleteCookie(cookie.name, cookie.domain, cookie.path || '/')
+      }
+    } catch { /* best effort */ }
+    try {
+      if (typeof webview.setCookie === 'function') webview.setCookie(cookie)
+    } catch { /* host may reject malformed cookies */ }
+  }
+}
+
+async function openAppShell(url, paths, attempt, session) {
+  const auth = session && Array.isArray(session.cookies)
+    ? session
+    : await exchangeBrowserAuth(url)
+  const openUrlTarget = auth.finalUrl || url
   const opened = await openShell(paths, {
     title: 'DSH',
     width: 1200,
@@ -1534,19 +1913,22 @@ async function openAppShell(url, paths, attempt) {
   if (typeof shell.center === 'function') {
     try { shell.center() } catch { /* keep the default position */ }
   }
-  const dataDir = join(paths.root, 'app')
+  const dataDir = currentAppDataDir(paths)
   mkdirSync(dataDir, { recursive: true })
   const controls = appControlScript()
   let webview
   try {
     const webContext = app.createWebContext({ dataDirectory: dataDir })
-    webview = shell.createWebview({ url, webContext, preload: controls })
+    // about:blank first so we can set HttpOnly cookies before the document loads.
+    webview = shell.createWebview({ url: 'about:blank', webContext, preload: controls })
+    applyAuthCookies(webview, auth)
+    if (typeof webview.loadUrl === 'function') webview.loadUrl(openUrlTarget)
   } catch (error) {
     logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
     try { shell.close() } catch { /* already dead */ }
     if (attempt === 0 && windowHostDied(error)) {
       dropWindowHost()
-      return openAppShell(url, paths, 1)
+      return openAppShell(url, paths, 1, auth)
     }
     return false
   }
@@ -1555,37 +1937,41 @@ async function openAppShell(url, paths, attempt) {
       webview.evaluateScript(`window.__dshSetMax&&window.__dshSetMax(${on ? 'true' : 'false'})`)
     } catch { /* page not ready */ }
   }
+  const refreshMax = watchMaximized(shell, syncMax)
   if (typeof webview.on === 'function') {
     webview.on('page-load-finished', () => {
       try { webview.evaluateScript(controls) } catch { /* host may reject a second inject */ }
       setTimeout(() => {
-        const on = typeof shell.isMaximized === 'function' && shell.isMaximized()
-        syncMax(on)
-        pushAppAppearance(readUserAppearance(dirname(paths.root)))
+        refreshMax()
+        pushAppAppearance(readUserAppearance(dirname(paths.root), readLayout(paths)?.profile))
       }, 40)
     })
   }
   applyWindowIcon(shell, 'dsh')
   bindShellControls(shell, webview, paths, () => { closeAppWindow() }, () => {
-    const next = !(typeof shell.isMaximized === 'function' && shell.isMaximized())
-    shell.setMaximized(next)
-    syncMax(next)
-  })
-  appHost = { window: shell, webview, url }
+    let current = false
+    try { current = typeof shell.isMaximized === 'function' && shell.isMaximized() === true } catch { current = false }
+    try { shell.setMaximized(!current) } catch { /* host may refuse */ }
+    refreshMax()
+  }, { nativeDrag: true, onMaximizedChange: refreshMax })
+  appHost = { window: shell, webview, url: openUrlTarget }
   await pumpSharedApp(app, paths)
   try { shell.show(); shell.focus() } catch { /* already visible */ }
+  logSupervisor(paths, `app window opened ${openUrlTarget} cookies=${auth.cookies.length}`)
   return true
 }
 
 async function askRunningPanel(layout) {
   const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
+  const paths = ensureStateDir(statePaths())
+  const url = readWebUrl(paths, layout)
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), 12000)
   try {
     const response = await fetch(`http://${DEFAULT_HOST}:${port}/api/app`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: '{}',
+      body: JSON.stringify({ force: true, resetCache: true, url }),
       signal: ac.signal,
     })
     if (!response.ok) return false
@@ -1599,35 +1985,12 @@ async function askRunningPanel(layout) {
 }
 
 async function runAppWindow() {
+  // Page windows are owned by the single panel HTTP process. Never start a
+  // second listener on panelPort — that used to steal 13081 from the panel.
   const paths = ensureStateDir(statePaths())
   const layout = readLayout(paths) || captureLaunch(process)
-  const port = panelPort(Number(layout?.port) || DEFAULT_PORT)
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    if (await panelSnapshotReachable(port)) {
-      if (await askRunningPanel(layout)) return { ok: true, reused: true }
-      openUrl(readWebUrl(paths, layout))
-      return { ok: true, fallback: true }
-    }
-    await new Promise(resolve => setTimeout(resolve, 80))
-  }
-  try {
-    await startPanelServer(paths, layout)
-  } catch (error) {
-    if (error && error.code === 'EADDRINUSE' && await askRunningPanel(layout)) {
-      return { ok: true, reused: true }
-    }
-    throw error
-  }
-  const url = readWebUrl(paths, layout)
-  let shown = false
-  try {
-    shown = await showAppWindow(url, paths)
-  } catch (error) {
-    logSupervisor(paths, `app window: ${error instanceof Error ? error.message : error}`)
-  }
-  if (!shown) openUrl(url)
-  await forever()
-  return { ok: true, url, shown }
+  await openDshUiAsync(paths, layout, { resetCache: true })
+  return { ok: true, delegated: true }
 }
 
 async function postFrame(url, body) {

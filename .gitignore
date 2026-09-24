@@ -5,6 +5,7 @@ node_modules/
 # Local scratch: the suites write inside the checkout (`.tmp/`), never to the
 # system temp directory, so this is the only place they touch.
 .tmp/
+.tmp-probe-*.mjs
 *.log
 *.tmp
 scratch-*.mjs

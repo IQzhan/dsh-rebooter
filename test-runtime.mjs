@@ -4,10 +4,10 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   beginJob, desktopCreatedMarker, endJob, ensureStateDir, envForHost, envForOneShot, installPanelEntry, isWebListening,
-  killPid, launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout,
-  performAction, pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, requestStopFiles,
+  isTokenizedWebUrl, killPid, launcherBody, launcherFileName, launcherNames, listenControl, lookOnPath, mergeLayout,
+  performAction, pidAlive, probeHttp, readJob, readLayout, readPanelPrefs, readPidFile, readWebUrl, requestStopFiles,
   resolveHome, sendControl, sleep, spawnProcess, startControlServer, statePaths, writePanelPrefs,
-  writePidFile,
+  writePidFile, writeText,
 } from './dsh-rebooter-runtime.js'
 import { cleanup, ROOT, scratch } from './test-support.mjs'
 
@@ -252,7 +252,27 @@ try {
   check('http probe sees 200', await probeHttp('http://127.0.0.1:37853/'), true)
   check('port listen check', await isWebListening({ host: '127.0.0.1', port: 37853 }), true)
   server.close()
+  const locked = createServer((_req, res) => { res.writeHead(401); res.end('no') })
+  await new Promise((resolve, reject) => {
+    locked.once('error', reject)
+    locked.listen(37854, '127.0.0.1', resolve)
+  })
+  check('http probe rejects 401', await probeHttp('http://127.0.0.1:37854/'), false)
+  locked.close()
   check('closed port is not listening', await isWebListening({ host: '127.0.0.1', port: 37853 }), false)
+
+  check('tokenized URL helper', isTokenizedWebUrl('http://127.0.0.1:3080/?token=abc'), true)
+  check('bare origin is not tokenized', isTokenizedWebUrl('http://127.0.0.1:3080/'), false)
+  writeText(paths.outLog, 'noise\ndsh web: http://127.0.0.1:3080/?token=ready-token\n')
+  writeText(paths.url, 'http://127.0.0.1:3080/')
+  check('readWebUrl prefers the tokenized log line',
+    readWebUrl(paths, { host: '127.0.0.1', port: 3080 }),
+    'http://127.0.0.1:3080/?token=ready-token')
+  writeText(paths.outLog, '')
+  writeText(paths.url, 'http://127.0.0.1:3080/')
+  check('readWebUrl ignores a bare saved URL',
+    readWebUrl(paths, { host: '127.0.0.1', port: 3080 }),
+    undefined)
 
   const child = spawnProcess(process.execPath, ['-e', 'setInterval(()=>{}, 999999)'], { stdio: 'ignore' })
   check('spawned pid is alive', pidAlive(child.pid), true)
@@ -262,7 +282,24 @@ try {
   check('SIGTERM reaps the child', pidAlive(child.pid), false)
   const runtimeSource = readFileSync(join(process.cwd(), 'dsh-rebooter-runtime.js'), 'utf8')
   check('stopping the service closes the page window',
-    runtimeSource.includes("if (action === 'stop' || action === 'update-stop') await requestAppWindowClose(layout)"), true)
+    runtimeSource.includes('Always close the page window before tearing the host down')
+    && runtimeSource.includes('await requestAppWindowClose(layout)')
+    && runtimeSource.includes("action === 'restart'"), true)
+  check('waitWebReady requires a tokenized URL',
+    runtimeSource.includes('function isTokenizedWebUrl')
+    && runtimeSource.includes('response.status >= 200 && response.status < 400')
+    && !runtimeSource.includes('if (await isWebListening(layout)) {\n      writeText(paths.url, url)'), true)
+  check('update recipes stream into job.log',
+    runtimeSource.includes('function runLoggedCommand')
+    && runtimeSource.includes('await runLoggedCommand'), true)
+  check('DSH upgrade clears the page window cache',
+    runtimeSource.includes('function resetAppWebViewData')
+    && runtimeSource.includes('page window profile →'), true)
+  check('openDshUi goes through the panel singleton',
+    runtimeSource.includes('async function openDshUiAsync')
+    && runtimeSource.includes('ensurePanelHttp')
+    && runtimeSource.includes('refusing a second DSH host')
+    && runtimeSource.includes('busy without a recorded pid'), true)
 } finally {
   if (previousHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousHome

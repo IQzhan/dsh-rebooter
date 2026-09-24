@@ -8,7 +8,7 @@ Chinese summary: [`status-panel.zh.md`](status-panel.zh.md).
 
 ## Goals
 
-1. See what DSH is doing (start / stop / restart / update / open) **without**
+1. See what DSH is doing (start / stop / restart / update plugins / update DSH / open) **without**
    opening the chat UI.
 2. One double-click entry: **DSH Server**.
 3. Closing or minimizing the panel never stops DSH or the supervisor.
@@ -64,25 +64,33 @@ The panel only reads them (and writes `panel.json` for prefs).
 Stable = no busy job. While `job.state === 'busy'`, **no** action buttons are
 shown (progress + log only).
 
-| DSH web | Buttons |
-| --- | --- |
-| **Stopped** | Start service · Update · Update and start service |
-| **Running** | Stop service · Restart service · Update and stop service · Update and restart service · Open UI |
+The panel renders **service** buttons, then two titled groups (**Plugins** / **DSH**). Never a lone “Update”.
+
+| DSH web | Service | Plugins | DSH |
+| --- | --- | --- | --- |
+| **Stopped** | Start service | Update plugins · Update plugins and start service | Update DSH · Update DSH and start service |
+| **Running** | Stop service · Restart service | Update plugins and stop service · Update plugins and restart service | Update DSH and stop service · Update DSH and restart service |
+
+`open` stays on the Open UI row (not in the action groups).
 
 Mapping to CLI actions:
 
 | UI label (en) | Action id |
 | --- | --- |
 | Start service | `start` |
-| Update | `update` (new: plugins only, stay down) |
-| Update and start service | `update-restart` |
+| Update plugins | `update` (plugins only, stay down) |
+| Update plugins and start service | `update-restart` |
+| Update plugins and stop service | `update-stop` |
+| Update plugins and restart service | `update-restart` |
+| Update DSH | `update-dsh` |
+| Update DSH and start service | `update-dsh-restart` |
+| Update DSH and stop service | `update-dsh-stop` |
+| Update DSH and restart service | `update-dsh-restart` |
 | Stop service | `stop` |
 | Restart service | `restart` |
-| Update and stop service | `update-stop` |
-| Update and restart service | `update-restart` |
 | Open UI | `open` (own window, or a bound app) |
 
-The page-window power button opens the same four items (`stop` / `restart` / `update-*`).
+The page-window power button opens the same four **plugin** items (`stop` / `restart` / `update-stop` / `update-restart`). DSH upgrades are panel + CLI only.
 Opening the panel for progress is automatic when those run.
 
 ## Progress vs console
@@ -95,6 +103,9 @@ Opening the panel for progress is automatic when those run.
 3. Log is read-only, auto-scroll, no input.
 4. Re-opening the panel mid-job restores the same strip + live log (SSE / poll
    on the files). No manual refresh.
+5. Plugin / DSH upgrades that fail mid-flight **roll back** to the pre-update
+   state; `… and restart service` still tries to bring the host back up, with
+   the failure kept on the status strip.
 
 Rationale: a permanent console is noise for “is it up?”; hiding all detail
 makes failures opaque. Mid-ground matches “tell me what is happening” without
@@ -105,8 +116,8 @@ a fake terminal on the idle home screen.
 - **Open UI** opens the page in its own window (the OS web view, not a browser tab). A bound program still wins.
 - Gear (**bind app**): pick an executable; then the gear becomes **Clear**.
 - Checkbox **Open UI when the service starts** ↔ `panel.json.autoOpen` (default off).
-- `stop` and `update-stop` close the page window after the action is accepted. The window close button does not stop the service.
-- `start` / `restart` / `update-restart` call `openDshUi` **only**
+- `stop` and `update-stop` / `update-dsh-stop` close the page window after the action is accepted. The window close button does not stop the service.
+- `start` / `restart` / `update-restart` / `update-dsh-restart` call `openDshUi` **only**
   when `autoOpen` is true (or CLI `--open` is passed explicitly). A bound program still wins; otherwise the page opens in its own window.
 - If the target looks already open: best-effort focus; browser path re-hits the
   URL so the page reloads when the browser cooperates.
@@ -128,11 +139,10 @@ prints the generated path and the exact command to re-run.
 
 | Window | Shell |
 | --- | --- |
-| Status panel | One frameless host (`decorations: false`). The page draws the title bar, and only minimize and close. Dragging that bar uses the same screen-delta protocol as the DSH window. No OS caption buttons, and no per-OS window code in this plugin. Colors follow the DSH web tokens and `prefers-color-scheme`. Copy uses the same browser-language match as DSH when `locale.preference` is unset, and otherwise the value from `$DSH_HOME/settings.yaml`. Theme is `ui-theme.preference` (`light`, `dark`, or `system`) from that same file, polled with the snapshot. |
-| DSH page | Frameless (`decorations: false`). The page is not restyled. A solid control plate appears while the pointer is on a thin L at the top-right: a 12px strip along the top and a 12px strip down the right, each about as long as the plate is wide. It then hides. Its power button opens the four-item lifecycle menu; beside it are minimize, maximize, and close. Dragging a non-interactive spot along the top moves the window through the same pointer protocol the panel title bar uses. No overlay mask. The taskbar icon is the official DSH mark. |
+| Status panel | Frameless. Custom title bar (minimize + close). Portable screen-delta drag — no Aero Snap, no cursor change. Appearance / locale from the profile `cordis.patch.yml` (legacy `settings.yaml` only if the patch is missing). Action buttons stay stable across polls so clicks are not swallowed. |
+| DSH page | Frameless; page content unchanged. Hover the top-right L (≈12px) to show power / min / max / close. Top blank band: drag window (Windows uses OS caption drag → Aero Snap; other platforms use the same screen-delta as the panel). Double-click that band posts the same `max` IPC as the maximize button. The max icon follows `shell.isMaximized()` only. Optional Win32 helper (`windows-caption-drag.cjs`) is loaded only for this window on Windows. |
 
-Custom minimize and close live in the page title bar. Close hides the window
-only. It does not signal DSH, and it does not stop the panel HTTP process.
+Close on either window hides that window only — it does not stop DSH or the panel HTTP process.
 
 ## CLI surface
 
@@ -140,8 +150,9 @@ only. It does not signal DSH, and it does not stop the panel HTTP process.
 dsh-rebooter panel          # ensure panel HTTP + show window
 dsh-rebooter desktop        # put the Desktop shortcut back
 dsh-rebooter start|stop|…   # unchanged, plus job.* updates; open respects prefs
-dsh-rebooter update         # new
-dsh-rebooter open           # new
+dsh-rebooter update         # profile plugins
+dsh-rebooter update-dsh*    # recorded DSH harness (git / npm)
+dsh-rebooter open           # open UI
 ```
 
 ## Host / Client
@@ -159,7 +170,7 @@ dsh-rebooter open           # new
 | core (ports, action sets, availability matrix) | yes |
 | runtime job + prefs + performAction | yes |
 | panel HTTP + HTML | yes |
-| window shell + Desktop shortcut + icon | OS-specific generators only |
+| window shell + Desktop shortcut + icon | OS-specific generators; optional Win32 caption-drag helper for the DSH page only |
 
 ## Testing
 

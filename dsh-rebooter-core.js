@@ -3,21 +3,39 @@
  *
  * Layout shape, launch reconstruction, action names, the control-port lock,
  * and log scraping live here so they can be tested without spawning DSH.
+ * Filesystem access for harness classification is injected (tests pass fakes).
  *
  * @module dsh-rebooter-core
  */
+
+import { dirname, join } from 'node:path'
 
 const PLUGIN_NAME = 'dsh-rebooter'
 const STATE_DIR_NAME = 'rebooter'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_PORT = 3080
 const DEFAULT_PROFILE = 'web'
+const DSH_PACKAGE = '@deepseek-ai/dsh'
 const LAYOUT_VERSION = 1
 const CONTROL_OFFSET = 10000
 const PANEL_OFFSET = 10001
+/** Page power-menu: plugin lifecycle only (DSH upgrade lives on panel + CLI). */
 const MENU_ACTIONS = Object.freeze(['stop', 'restart', 'update-stop', 'update-restart'])
-const EXTRA_ACTIONS = Object.freeze(['update', 'open'])
-const ALL_ACTIONS = Object.freeze(['start', ...MENU_ACTIONS, ...EXTRA_ACTIONS])
+const PLUGIN_UPDATE_ACTIONS = Object.freeze(['update', 'update-stop', 'update-restart'])
+const DSH_UPDATE_ACTIONS = Object.freeze(['update-dsh', 'update-dsh-stop', 'update-dsh-restart'])
+const EXTRA_ACTIONS = Object.freeze(['update', 'update-dsh', 'open'])
+const ALL_ACTIONS = Object.freeze([
+  'start',
+  'stop',
+  'restart',
+  'update-stop',
+  'update-restart',
+  'update',
+  'update-dsh-stop',
+  'update-dsh-restart',
+  'update-dsh',
+  'open',
+])
 const WEB_URL_RE = /dsh web:\s*(https?:\/\/[^\s\r\n]+)/g
 
 function controlPort(webPort) {
@@ -42,12 +60,29 @@ function isMenuAction(value) {
   return MENU_ACTIONS.includes(value)
 }
 
+function isPluginUpdateAction(value) {
+  return PLUGIN_UPDATE_ACTIONS.includes(value)
+}
+
+function isDshUpdateAction(value) {
+  return DSH_UPDATE_ACTIONS.includes(value)
+}
+
 /** Buttons shown on the status panel when no job is busy. */
 function availableActions(running) {
   if (running === true) {
-    return Object.freeze(['stop', 'restart', 'update-stop', 'update-restart', 'open'])
+    return Object.freeze([
+      'stop', 'restart',
+      'update-stop', 'update-restart',
+      'update-dsh-stop', 'update-dsh-restart',
+      'open',
+    ])
   }
-  return Object.freeze(['start', 'update', 'update-restart'])
+  return Object.freeze([
+    'start',
+    'update', 'update-restart',
+    'update-dsh', 'update-dsh-restart',
+  ])
 }
 
 function idleJob() {
@@ -76,7 +111,8 @@ function shouldOpenUi(action, options = {}, prefs = defaultPanelPrefs()) {
   if (action === 'open') return true
   if (options.open === true) return true
   if (options.open === false) return false
-  if (action === 'start' || action === 'restart' || action === 'update-restart') {
+  if (action === 'start' || action === 'restart'
+    || action === 'update-restart' || action === 'update-dsh-restart') {
     return prefs.autoOpen === true
   }
   return false
@@ -189,28 +225,302 @@ function shouldSkipStart(webHealthy, supervisorAlive) {
   return webHealthy === true || supervisorAlive === true
 }
 
+function normalizePath(value) {
+  return String(value).replace(/\\/g, '/')
+}
+
+function parentOrUndef(dir) {
+  if (typeof dir !== 'string' || dir.length === 0) return undefined
+  const parent = dirname(dir)
+  return parent === dir ? undefined : parent
+}
+
+function isNpxEntry(entry) {
+  const norm = normalizePath(entry)
+  return norm.includes('/_npx/') || /\/npm-cache\/_npx\//i.test(norm)
+}
+
+function readPackageName(pkgPath, io) {
+  try {
+    const pkg = JSON.parse(io.readFileSync(pkgPath, 'utf8'))
+    return typeof pkg?.name === 'string' ? pkg.name : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readPackageJson(pkgPath, io) {
+  try {
+    return JSON.parse(io.readFileSync(pkgPath, 'utf8'))
+  } catch {
+    return undefined
+  }
+}
+
+function packageDeclaresDsh(pkg) {
+  if (!pkg || typeof pkg !== 'object') return false
+  for (const field of ['dependencies', 'optionalDependencies', 'devDependencies']) {
+    const bag = pkg[field]
+    if (bag && typeof bag === 'object' && Object.prototype.hasOwnProperty.call(bag, DSH_PACKAGE)) {
+      return true
+    }
+  }
+  return false
+}
+
+/**
+ * Classify the harness install recorded in layout.
+ * @param {object} layout
+ * @param {{ existsSync: Function, readFileSync: Function, realpathSync?: Function }} io
+ */
+function classifyHarness(layout, io) {
+  if (!io || typeof io.existsSync !== 'function' || typeof io.readFileSync !== 'function') {
+    return { kind: 'unknown', entry: '', root: undefined, reason: 'filesystem io required', npx: false }
+  }
+  const entry = typeof layout?.args?.[0] === 'string' ? layout.args[0] : ''
+  if (!entry || !io.existsSync(entry)) {
+    return { kind: 'unknown', entry, root: undefined, reason: 'missing entry script', npx: false }
+  }
+  const npx = isNpxEntry(entry)
+
+  let cliPkgRoot
+  for (let dir = dirname(entry); dir; dir = parentOrUndef(dir)) {
+    const pkgPath = join(dir, 'package.json')
+    if (!io.existsSync(pkgPath)) continue
+    if (readPackageName(pkgPath, io) === DSH_PACKAGE) {
+      cliPkgRoot = dir
+      break
+    }
+  }
+
+  const walkStart = typeof layout?.cwd === 'string' && layout.cwd.trim().length > 0
+    ? layout.cwd.trim()
+    : dirname(entry)
+  let gitRoot
+  for (let dir = walkStart; dir; dir = parentOrUndef(dir)) {
+    if (io.existsSync(join(dir, '.git'))) {
+      gitRoot = dir
+      break
+    }
+  }
+
+  const normEntry = normalizePath(entry)
+  const inNodeModules = normEntry.includes('/node_modules/')
+
+  if (inNodeModules && cliPkgRoot) {
+    return {
+      kind: 'npm', entry, root: cliPkgRoot, cliPkgRoot, gitRoot, npx,
+      reason: npx ? 'npx install is not upgradable' : undefined,
+    }
+  }
+
+  const isSourceBin = /[/\\]apps[/\\]cli[/\\]src[/\\]bin\.ts$/i.test(entry)
+  const cliUnderGit = Boolean(
+    gitRoot && cliPkgRoot
+    && normalizePath(cliPkgRoot).startsWith(`${normalizePath(gitRoot)}/`),
+  )
+  if (gitRoot && (isSourceBin || cliUnderGit)) {
+    return { kind: 'git', entry, root: gitRoot, cliPkgRoot, gitRoot, npx: false, reason: undefined }
+  }
+
+  return {
+    kind: 'unknown', entry, root: undefined, cliPkgRoot, gitRoot, npx,
+    reason: 'unrecognized DSH install',
+  }
+}
+
+function projectRootAboveCliPkg(cliPkgRoot) {
+  let dir = cliPkgRoot
+  while (dir && !normalizePath(dir).endsWith('/node_modules')) {
+    dir = parentOrUndef(dir)
+  }
+  return dir ? parentOrUndef(dir) : undefined
+}
+
+/**
+ * Build a DSH-update recipe from a classification.
+ * @returns {{ kind: string, steps: object[], refreshLayout: boolean } | { error: string }}
+ */
+function dshUpdatePlan(layout, classified, io) {
+  if (!classified || classified.kind === 'unknown') {
+    return { error: classified?.reason || 'unrecognized DSH install' }
+  }
+  if (classified.npx || classified.reason === 'npx install is not upgradable') {
+    return { error: 'npx install is not upgradable; start DSH from a global or project-local @deepseek-ai/dsh' }
+  }
+
+  if (classified.kind === 'git') {
+    const cwd = classified.gitRoot || classified.root
+    if (!cwd) return { error: 'missing git root' }
+    const steps = [
+      { tool: 'git', args: ['status', '--porcelain'], cwd, label: 'git status', expectEmptyStdout: true },
+      { tool: 'git', args: ['pull', '--ff-only'], cwd, label: 'git pull --ff-only', capturesPull: true },
+      { tool: 'pnpm', args: ['install'], cwd, label: 'pnpm install' },
+    ]
+    const execArgv = Array.isArray(layout?.execArgv) ? layout.execArgv : []
+    const usesTsx = execArgv.some((token) => String(token).includes('tsx'))
+    const isBinTs = /bin\.ts$/i.test(classified.entry || '')
+    // Host CLI can run from TypeScript via tsx, but browser plugins are still
+    // served from packages/*/lib/client.js. Rebuild only when pull moved HEAD —
+    // a no-op pull must not run `build:lib:client`, which often fails on WIP
+    // trees for unrelated tsc errors and previously blocked the panel.
+    if (usesTsx && isBinTs) {
+      steps.push({
+        tool: 'pnpm',
+        args: ['run', 'build:lib:client'],
+        cwd,
+        label: 'pnpm build:lib:client',
+        optionalUnlessNeeded: true,
+      })
+      return { kind: 'git', steps, refreshLayout: false }
+    }
+    if (/[/\\]apps[/\\]cli[/\\]lib[/\\]bin\.js$/i.test(classified.entry || '')) {
+      steps.push({
+        tool: 'pnpm',
+        args: ['--filter', DSH_PACKAGE, 'run', 'build'],
+        cwd,
+        label: `pnpm build ${DSH_PACKAGE}`,
+        optionalUnlessNeeded: true,
+      })
+      return { kind: 'git', steps, refreshLayout: false }
+    }
+    return { error: 'cannot choose a build; start DSH via tsx + bin.ts or a built lib/bin.js' }
+  }
+
+  if (classified.kind === 'npm') {
+    if (!io || typeof io.existsSync !== 'function') {
+      return { error: 'filesystem io required for npm DSH update' }
+    }
+    const realpathSync = typeof io.realpathSync === 'function' ? io.realpathSync : (path) => path
+    const cliPkgRoot = classified.cliPkgRoot || classified.root
+    if (!cliPkgRoot) return { error: 'missing @deepseek-ai/dsh package root' }
+
+    const norm = normalizePath(cliPkgRoot)
+    const looksGlobal = /\/npm\/node_modules\/@deepseek-ai\/dsh$/i.test(norm)
+      || /\/Roaming\/npm\/node_modules\/@deepseek-ai\/dsh$/i.test(norm)
+
+    if (looksGlobal) {
+      return {
+        kind: 'npm',
+        scope: 'global',
+        steps: [{
+          tool: 'npm',
+          args: ['install', '-g', `${DSH_PACKAGE}@latest`],
+          cwd: cliPkgRoot,
+          label: `npm install -g ${DSH_PACKAGE}@latest`,
+        }],
+        refreshLayout: true,
+      }
+    }
+
+    const projectRoot = projectRootAboveCliPkg(cliPkgRoot)
+    if (!projectRoot) {
+      return { error: 'cannot locate project root for local @deepseek-ai/dsh' }
+    }
+    const pkgPath = join(projectRoot, 'package.json')
+    const pkg = readPackageJson(pkgPath, io)
+    if (!packageDeclaresDsh(pkg)) {
+      return { error: 'project does not declare @deepseek-ai/dsh as a direct dependency' }
+    }
+    const linked = join(projectRoot, 'node_modules', '@deepseek-ai', 'dsh')
+    if (!io.existsSync(linked)) {
+      return { error: 'project node_modules/@deepseek-ai/dsh is missing' }
+    }
+    try {
+      if (normalizePath(realpathSync(linked)) !== normalizePath(realpathSync(cliPkgRoot))) {
+        return { error: 'project @deepseek-ai/dsh does not match the running entry' }
+      }
+    } catch {
+      return { error: 'cannot realpath local @deepseek-ai/dsh' }
+    }
+    const usePnpm = io.existsSync(join(projectRoot, 'pnpm-lock.yaml'))
+    if (usePnpm) {
+      return {
+        kind: 'npm',
+        scope: 'local',
+        steps: [{
+          tool: 'pnpm',
+          args: ['add', `${DSH_PACKAGE}@latest`],
+          cwd: projectRoot,
+          label: `pnpm add ${DSH_PACKAGE}@latest`,
+        }],
+        refreshLayout: true,
+      }
+    }
+    return {
+      kind: 'npm',
+      scope: 'local',
+      steps: [{
+        tool: 'npm',
+        args: ['install', `${DSH_PACKAGE}@latest`],
+        cwd: projectRoot,
+        label: `npm install ${DSH_PACKAGE}@latest`,
+      }],
+      refreshLayout: true,
+    }
+  }
+
+  return { error: 'unrecognized DSH install' }
+}
+
+/**
+ * True when a successful `git pull` transcript indicates HEAD moved.
+ * @param {string} [pullStdout]
+ */
+function gitPullBroughtCommits(pullStdout) {
+  const out = String(pullStdout ?? '')
+  if (out.length === 0) return false
+  if (/\bAlready up to date\b/i.test(out)) return false
+  return true
+}
+
+/**
+ * Whether a git client/lib rebuild is required after `git pull`.
+ * Only the pull transcript matters: no-op pulls must not invoke a workspace
+ * build that WIP trees often cannot complete.
+ * @param {string} _gitRoot unused; kept for call-site stability
+ * @param {unknown} _io unused; kept for call-site stability
+ * @param {string} [pullStdout]
+ * @returns {{ needed: boolean, reason: string }}
+ */
+function gitClientBuildNeeded(_gitRoot, _io, pullStdout) {
+  if (gitPullBroughtCommits(pullStdout)) {
+    return { needed: true, reason: 'git pull brought new commits' }
+  }
+  return { needed: false, reason: 'pull unchanged' }
+}
+
 export {
   ALL_ACTIONS,
   CONTROL_OFFSET,
   DEFAULT_HOST,
   DEFAULT_PORT,
   DEFAULT_PROFILE,
+  DSH_PACKAGE,
+  DSH_UPDATE_ACTIONS,
   EXTRA_ACTIONS,
   LAYOUT_VERSION,
   MENU_ACTIONS,
   PANEL_OFFSET,
   PLUGIN_NAME,
+  PLUGIN_UPDATE_ACTIONS,
   STATE_DIR_NAME,
   availableActions,
   backoffDelay,
   captureLaunch,
   canonicalUrl,
+  classifyHarness,
   controlPort,
   defaultPanelPrefs,
+  dshUpdatePlan,
+  gitClientBuildNeeded,
+  gitPullBroughtCommits,
   idleJob,
   isAction,
+  isDshUpdateAction,
   isMenuAction,
   isPidAlive,
+  isPluginUpdateAction,
   panelPort,
   parseHost,
   parsePort,

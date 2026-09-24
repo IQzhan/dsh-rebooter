@@ -114,8 +114,16 @@ assertImportFree(hostSource, 'dsh-rebooter.host.js')
 assertImportFree(clientSource, 'dsh-rebooter.client.js')
 assertImportFree(cliSource, 'dsh-rebooter-cli.js')
 
-const coreBody = stripExportBlock(coreSource, 'dsh-rebooter-core.js').trim()
-const runtimeBody = rewriteNodeImports(dropCoreImport(stripExportBlock(runtimeSource, 'dsh-rebooter-runtime.js'))).trim()
+function dropNodePathImport(source) {
+  return source.replace(/^import\s*\{[^}]+\}\s*from\s+'node:path'\s*$/gm, '')
+}
+
+const coreBody = rewriteNodeImports(
+  dropNodePathImport(stripExportBlock(coreSource, 'dsh-rebooter-core.js')),
+).trim()
+const runtimeBody = rewriteNodeImports(
+  dropCoreImport(dropNodePathImport(stripExportBlock(runtimeSource, 'dsh-rebooter-runtime.js'))),
+).trim()
 function dropRelativeImports(source) {
   return source
     .replace(/^import\s*\{[\s\S]*?\}\s*from\s+'\.\/dsh-rebooter-core\.js'\s*$/m, '')
@@ -134,7 +142,14 @@ const panelBody = rewriteNodeImports(
 const hostBody = stripExportBlock(hostSource, 'dsh-rebooter.host.js').trim()
 const cliBody = stripExportBlock(cliSource, 'dsh-rebooter-cli.js').trim()
 
-const shared = [banner, `'use strict'`, coreBody, runtimeBody, panelBody].join('\n\n')
+const shared = [
+  banner,
+  `'use strict'`,
+  `const { delimiter, dirname, join } = require('node:path')`,
+  coreBody,
+  runtimeBody,
+  panelBody,
+].join('\n\n')
 
 const hostModule = [
   shared,
@@ -208,6 +223,7 @@ const manifest = {
   },
   dependencies: {
     '@webviewjs/webview': '^0.4.5',
+    'koffi': '^3.3.0',
   },
   engines: {
     node: '>=24',
@@ -273,6 +289,7 @@ await writeFile(join(OUT_PACKAGE, 'lib', 'index.cjs'), `${hostModule}\n`, 'utf8'
 await writeFile(join(OUT_PACKAGE, 'lib', 'client.cjs'), `${clientModule}\n`, 'utf8')
 await writeFile(join(OUT_PACKAGE, 'lib', 'cli.cjs'), `${cliModule}\n`, 'utf8')
 await copyFile(join(here, 'windows-hide-child.cjs'), join(OUT_PACKAGE, 'lib', 'windows-hide-child.cjs'))
+await copyFile(join(here, 'windows-caption-drag.cjs'), join(OUT_PACKAGE, 'lib', 'windows-caption-drag.cjs'))
 await writeFile(join(OUT_PACKAGE, 'panel', 'README.txt'), [
   'DSH-Server.vbs and DSH-Server.sh ship with the package.',
   'The Desktop shortcut is created the first time the Host mounts.',
@@ -289,7 +306,8 @@ for (const name of iconNames) {
 }
 
 const hostInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', '@webviewjs', 'webview'))
-if (!hostInstalled && process.env.DSH_REBOOTER_SKIP_WEBVIEW !== '1') {
+const captionDragInstalled = existsSync(join(OUT_PACKAGE, 'node_modules', 'koffi'))
+if ((!hostInstalled || !captionDragInstalled) && process.env.DSH_REBOOTER_SKIP_WEBVIEW !== '1') {
   const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
   const installed = spawnSync(npm, ['install', '--omit=dev', '--no-audit', '--no-fund'], {
     cwd: OUT_PACKAGE,
@@ -297,7 +315,7 @@ if (!hostInstalled && process.env.DSH_REBOOTER_SKIP_WEBVIEW !== '1') {
     shell: process.platform === 'win32',
   })
   if (installed.status !== 0) {
-    console.error('build: window host was not installed; rerun the build online so the panel window can open')
+    console.error('build: package dependencies were not installed; rerun the build online')
     process.exit(installed.status ?? 1)
   }
 }

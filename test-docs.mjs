@@ -30,10 +30,24 @@ check('and the same inline code', tokens(en).sort(), tokens(zh).sort())
 check('the English file links to the Chinese one', /README\.zh\.md/.test(en.split('\n').slice(0, 6).join('\n')), true)
 check('the Chinese file links to the English one', /README\.md/.test(zh.split('\n').slice(0, 6).join('\n')), true)
 
-const KEYS = ['start', 'stop', 'restart', 'update', 'update-stop', 'update-restart', 'open', 'panel', '/api/dsh-rebooter/action', 'DSH Server']
+const KEYS = [
+  'start', 'stop', 'restart', 'update', 'update-stop', 'update-restart',
+  'update-dsh', 'update-dsh-stop', 'update-dsh-restart',
+  'open', 'panel', '/api/dsh-rebooter/action', 'DSH Server',
+]
 check('every action and slot is documented in both languages',
   KEYS.filter(key => !en.includes(key) || !zh.includes(key)), [])
 check('status panel design is linked', [en.includes('docs/status-panel'), zh.includes('docs/status-panel')], [true, true])
+check('design notes cover update rollback',
+  readFileSync(join(ROOT, 'docs', 'design-notes.md'), 'utf8').includes('restore the pre-update state'), true)
+check('both READMEs document upgrade rollback',
+  [/roll(?:ed)? back|pre-update/.test(en), /回滚|更新前/.test(zh)], [true, true])
+check('both READMEs document restart-after-failure',
+  [/update-\*-restart|still brings the service/.test(en), /update-\*-restart|仍会拉起/.test(zh)], [true, true])
+check('both READMEs document Windows Aero Snap for the DSH page',
+  [/Aero Snap/.test(en), /Aero Snap/.test(zh)], [true, true])
+check('no leftover temporary update-dsh plan',
+  existsSync(join(ROOT, 'docs', 'plans', '2026-09-23-update-dsh.md')), false)
 
 for (const command of [
   'node build-rebooter.mjs',
