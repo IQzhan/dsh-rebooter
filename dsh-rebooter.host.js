@@ -81,9 +81,17 @@ function mountRebooter(ctx) {
           send(400, { ok: false, error: `unknown action ${JSON.stringify(action)}` })
           return
         }
-        dispatchCli(action, ['--from-host'], { dshHome: layout.dshHome, cwd: layout.cwd })
-        void ensurePanelVisible(paths, layout)
+        // Reply before dispatch: stop / update-* kill this Host; sending first
+        // lets the page clear its menu busy state instead of hanging on fetch.
         send(200, { ok: true, action, dispatched: true })
+        setImmediate(() => {
+          try {
+            dispatchCli(action, ['--from-host'], { dshHome: layout.dshHome, cwd: layout.cwd })
+          } catch (error) {
+            logSupervisor(paths, `dispatch ${action}: ${error instanceof Error ? error.message : error}`)
+          }
+          void ensurePanelVisible(paths, layout)
+        })
         return
       }
       send(404, { error: `unknown method ${JSON.stringify(method)}` })

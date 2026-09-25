@@ -131,7 +131,7 @@ Before the first run, add a Trusted Publisher on the npm package settings: user 
 node verify.mjs
 ```
 
-**8 suites, 260 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 262 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

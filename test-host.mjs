@@ -106,6 +106,11 @@ check('start is refused from the in-app menu', rejected.status, 400)
 const accepted = await postAction('stop')
 check('stop is accepted', accepted.json, { ok: true, action: 'stop', dispatched: true })
 
+const hostSource = readFileSync(join(ROOT, 'dsh-rebooter.host.js'), 'utf8')
+check('host replies before dispatching stop/update so the page fetch can finish',
+  /send\(200, \{ ok: true, action, dispatched: true \}\)[\s\S]*?setImmediate\([\s\S]*?dispatchCli/.test(hostSource)
+  && !/dispatchCli\(action[\s\S]*?send\(200, \{ ok: true, action, dispatched: true \}\)/.test(hostSource), true)
+
 {
   let status = 0
   let body = ''

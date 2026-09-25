@@ -1481,18 +1481,27 @@ function appControlScript() {
     busy = true;
     setNote(phrase('working'));
     paintBusy();
-    fetch('/api/dsh-rebooter/action', {
+    var ac = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () {
+      try { if (ac) ac.abort(); } catch (e) {}
+    }, 12000);
+    var opts = {
       method: 'POST',
       headers: { 'content-type': 'application/json', accept: 'application/json' },
       body: JSON.stringify({ action: action }),
-    }).then(function (response) {
+    };
+    if (ac) opts.signal = ac.signal;
+    fetch('/api/dsh-rebooter/action', opts).then(function (response) {
       return response.json().then(function (body) {
-        if (!response.ok || !body || body.ok !== true) throw new Error('failed');
+        if (!response.ok || !body || body.ok !== true) throw new Error('http');
         closeMenu();
-      }, function () { throw new Error('failed'); });
-    }).catch(function () {
-      setNote(phrase('failed'));
+      }, function () { throw new Error('http'); });
+    }).catch(function (error) {
+      // Host may die mid-response on stop/update-*; do not leave the menu locked.
+      if (error && error.message === 'http') setNote(phrase('failed'));
+      else closeMenu();
     }).then(function () {
+      clearTimeout(timer);
       busy = false;
       paintBusy();
     });

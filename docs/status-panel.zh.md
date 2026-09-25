@@ -19,6 +19,7 @@
 状态全在 `$DSH_HOME/rebooter/` 的文件里（`job.json` / `job.log` / `panel.json`）。  
 面板是本机 HTTP（`webPort + 10001`）+ 极简 HTML。  
 真正干活的仍是现有 `performAction` / supervisor。  
+Host 菜单 `POST /action`：**先回 200**，再 `dispatchCli`（停服/更新会杀掉当前 Host，避免页面菜单卡在「正在执行…」）。  
 窗口壳与桌面快捷方式按系统生成（`package/panel/`，桌面名 **DSH Server**）。  
 可选的 Win32 标题栏拖拽 helper 只给 **DSH 页面**窗口用；面板始终走可移植的屏幕位移拖拽。
 

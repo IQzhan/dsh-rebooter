@@ -21,6 +21,10 @@ check('client inject list is empty', /export const inject = \[\]/.test(client), 
 check('window menu has the four previous actions', panel.includes("['stop', 'restart', 'update-stop', 'update-restart']"), true)
 check('window menu does not offer start', panel.includes("data-act', 'start'") || panel.includes("['start'"), false)
 check('window menu posts the host action route', panel.includes("'/api/dsh-rebooter/action'"), true)
+check('window menu action fetch times out so busy cannot stick',
+  panel.includes('AbortController')
+  && panel.includes('ac.abort()')
+  && panel.includes("error.message === 'http'"), true)
 check('power button opens a menu', panel.includes("setAttribute('aria-haspopup', 'menu')"), true)
 check('power click does not stop or start immediately', panel.includes("live ? 'stop' : 'start'"), false)
 check('window close is still only a window close', panel.includes("op === 'close'") && panel.includes('closeAppWindow()'), true)

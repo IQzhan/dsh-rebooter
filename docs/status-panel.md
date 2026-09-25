@@ -157,9 +157,10 @@ dsh-rebooter open           # open UI
 
 ## Host / Client
 
-- Host `POST /action` (menu actions): `dispatchCli` as today, then
-  `ensurePanelVisible()` so progress appears even if the user never opened
-  the panel.
+- Host `POST /action` (menu actions): reply `200` **first**, then `dispatchCli`
+  on the next turn so stop / update-* can kill this Host without leaving the
+  page menu stuck on “working”. Then `ensurePanelVisible()` so progress
+  appears even if the user never opened the panel.
 - Host mount: `installPanelEntry` creates the Desktop shortcut only when `$DSH_HOME/rebooter/desktop.created` is absent. `desktop` and `POST /api/desktop` pass `forceDesktop`.
 - Client: no sidebar control. The menu is the power button on the page window.
 
