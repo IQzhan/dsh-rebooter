@@ -292,6 +292,12 @@ try {
   check('update recipes stream into job.log',
     runtimeSource.includes('function runLoggedCommand')
     && runtimeSource.includes('await runLoggedCommand'), true)
+  check('update-dsh / update-dsh-stop / update-dsh-restart share updateDsh',
+    (runtimeSource.match(/await updateDsh\(/g) || []).length === 2
+    && runtimeSource.includes("action === 'update-dsh'")
+    && runtimeSource.includes("action === 'update-dsh-stop' || action === 'update-dsh-restart'")
+    && runtimeSource.includes('async function updateDsh')
+    && !runtimeSource.includes('build:lib:client'), true)
   check('DSH upgrade clears the page window cache',
     runtimeSource.includes('function resetAppWebViewData')
     && runtimeSource.includes('page window profile →'), true)

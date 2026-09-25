@@ -1492,7 +1492,10 @@ async function runRecipeStep(paths, step, env) {
     return result
   }
   if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || '').trim().split(/\r?\n/).slice(-8).join('\n')
+    const combined = `${result.stderr || ''}\n${result.stdout || ''}`
+    const lines = combined.trim().split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean)
+    const interesting = lines.filter((line) => /error TS|\berror\b:|ERR!/i.test(line)).slice(-12)
+    const detail = (interesting.length > 0 ? interesting : lines.slice(-8)).join('\n')
     throw new Error(
       detail
         ? `${step.label || step.tool} failed (exit ${result.status ?? '?'}):\n${detail}`

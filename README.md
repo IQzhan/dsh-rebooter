@@ -97,7 +97,7 @@ git pull && node build-rebooter.mjs
 
 Uninstall: `dsh plugin --profile web remove dsh-rebooter`. State lives in `$DSH_HOME/rebooter/` and is left in place.
 
-The in-app **Update plugins** actions run `dsh plugin --profile web update --latest`, which updates **every** installed plugin, not only this one. On failure they restore the profile `package.json` / lockfile snapshot and reinstall. **Update DSH** (`update-dsh*`) upgrades the harness install recorded in `layout.json` (git: pull --ff-only + pnpm install, and `build:lib:client` only when pull brought commits; or npm/pnpm for `@deepseek-ai/dsh`). It never touches profile plugin deps. If a mutating step fails, the install is rolled back to the pre-update state; `update-*-restart` still brings the service back up afterward.
+The in-app **Update plugins** actions run `dsh plugin --profile web update --latest`, which updates **every** installed plugin, not only this one. On failure they restore the profile `package.json` / lockfile snapshot and reinstall. **Update DSH** (`update-dsh*`) upgrades the harness install recorded in `layout.json` (git: pull --ff-only + pnpm install, then `build:lib` + `build:web` only when pull brought commits; npm: install `@deepseek-ai/dsh@latest`, which already ships the web dist). It never touches profile plugin deps. If a mutating step fails, the install is rolled back to the pre-update state; `update-*-restart` still brings the service back up afterward.
 
 ## Publish a version
 
@@ -131,7 +131,7 @@ Before the first run, add a Trusted Publisher on the npm package settings: user 
 node verify.mjs
 ```
 
-**8 suites, 262 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
+**8 suites, 267 assertions**: policy core · runtime · panel · adapter · package · menu · bilingual docs · portability guard.
 
 Scratch files stay in-repo under `.tmp/`, never the system temp directory.
 

@@ -73,6 +73,8 @@ check('update-dsh is an action', isAction('update-dsh'), true)
 check('update-dsh is not a menu action', isMenuAction('update-dsh'), false)
 check('plugin update action helper', isPluginUpdateAction('update-stop'), true)
 check('dsh update action helper', isDshUpdateAction('update-dsh-restart'), true)
+check('all three DSH update entry points are recognized',
+  ['update-dsh', 'update-dsh-stop', 'update-dsh-restart'].every((action) => isDshUpdateAction(action)), true)
 check('the four menu actions', MENU_ACTIONS, ['stop', 'restart', 'update-stop', 'update-restart'])
 check('all actions include start, menu, update, update-dsh, open', ALL_ACTIONS,
   ['start', 'stop', 'restart', 'update-stop', 'update-restart', 'update',
@@ -148,15 +150,20 @@ const gitClassified = classifyHarness(gitLayout, gitIo)
 check('classifyHarness detects a git source tree', gitClassified.kind, 'git')
 check('classifyHarness git root', gitClassified.root, '/repo')
 const gitPlan = dshUpdatePlan(gitLayout, gitClassified, gitIo)
-check('git + tsx + bin.ts rebuilds client libs', gitPlan.error, undefined)
+check('git + tsx + bin.ts rebuilds host+client libs and the web shell', gitPlan.error, undefined)
 check('git recipe steps', (gitPlan.steps || []).map((step) => [step.tool, ...step.args]), [
   ['git', 'status', '--porcelain'],
   ['git', 'pull', '--ff-only'],
   ['pnpm', 'install'],
-  ['pnpm', 'run', 'build:lib:client'],
+  ['pnpm', 'run', 'build:lib'],
+  ['pnpm', 'run', 'build:web'],
 ])
 check('git pull step captures stdout', (gitPlan.steps || []).find((step) => step.capturesPull)?.args?.[0], 'pull')
-check('tsx client build is gated', (gitPlan.steps || []).at(-1)?.optionalUnlessNeeded, true)
+check('tsx lib and web builds are gated',
+  (gitPlan.steps || []).filter((step) => step.optionalUnlessNeeded === true).map((step) => step.label),
+  ['pnpm build:lib', 'pnpm build:web'])
+check('git recipe never rebuilds client without host',
+  !(gitPlan.steps || []).some((step) => (step.args || []).includes('build:lib:client')), true)
 check('skip build when pull unchanged',
   gitClientBuildNeeded('/repo', {}, 'Already up to date.\n').needed, false)
 check('build when pull brought commits',
@@ -179,10 +186,15 @@ const builtPlan = dshUpdatePlan(
   classifyHarness({ args: [builtEntry], cwd: '/repo' }, builtIo),
   builtIo,
 )
-check('built lib/bin.js adds a filtered build',
-  (builtPlan.steps || []).at(-1)?.args,
-  ['--filter', '@deepseek-ai/dsh', 'run', 'build'])
-check('built lib/bin.js build is gated', (builtPlan.steps || []).at(-1)?.optionalUnlessNeeded, true)
+check('built lib/bin.js rebuilds lib then web shell',
+  (builtPlan.steps || []).filter((step) => step.optionalUnlessNeeded === true).map((step) => [step.tool, ...step.args]),
+  [
+    ['pnpm', 'run', 'build:lib'],
+    ['pnpm', 'run', 'build:web'],
+  ])
+check('built lib/bin.js rebuild steps are gated on pull',
+  (builtPlan.steps || []).filter((step) => (step.args || []).includes('build:lib') || (step.args || []).includes('build:web'))
+    .every((step) => step.optionalUnlessNeeded === true), true)
 
 const npxEntry = '/opt/npm-cache/_npx/abc/node_modules/@deepseek-ai/dsh/lib/bin.js'
 const npxIo = makeIo({
@@ -206,6 +218,8 @@ const globalPlan = dshUpdatePlan({ args: [globalEntry] }, globalClassified, glob
 check('global npm install plans npm -g', globalPlan.steps?.[0]?.args,
   ['install', '-g', '@deepseek-ai/dsh@latest'])
 check('global npm refreshLayout is on', globalPlan.refreshLayout, true)
+check('global npm does not rebuild a git web shell',
+  !(globalPlan.steps || []).some((step) => (step.args || []).includes('build:web') || (step.args || []).includes('build:lib')), true)
 
 const localEntry = '/app/node_modules/@deepseek-ai/dsh/lib/bin.js'
 const localIo = makeIo({
@@ -222,6 +236,9 @@ check('local pnpm project uses pnpm add', localPlan.steps?.[0], {
   cwd: '/app',
   label: 'pnpm add @deepseek-ai/dsh@latest',
 })
+check('local npm install does not rebuild a git web shell',
+  localPlan.refreshLayout === true
+  && !(localPlan.steps || []).some((step) => (step.args || []).includes('build:web') || (step.args || []).includes('build:lib')), true)
 
 const unknown = classifyHarness({ args: ['/opt/scratch/not-dsh.js'] }, makeIo({ '/opt/scratch/not-dsh.js': 'x' }))
 check('unrecognized trees are unknown', unknown.kind, 'unknown')

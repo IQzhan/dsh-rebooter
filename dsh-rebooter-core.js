@@ -360,28 +360,29 @@ function dshUpdatePlan(layout, classified, io) {
     const execArgv = Array.isArray(layout?.execArgv) ? layout.execArgv : []
     const usesTsx = execArgv.some((token) => String(token).includes('tsx'))
     const isBinTs = /bin\.ts$/i.test(classified.entry || '')
-    // Host CLI can run from TypeScript via tsx, but browser plugins are still
-    // served from packages/*/lib/client.js. Rebuild only when pull moved HEAD —
-    // a no-op pull must not run `build:lib:client`, which often fails on WIP
-    // trees for unrelated tsc errors and previously blocked the panel.
-    if (usesTsx && isBinTs) {
-      steps.push({
-        tool: 'pnpm',
-        args: ['run', 'build:lib:client'],
-        cwd,
-        label: 'pnpm build:lib:client',
-        optionalUnlessNeeded: true,
-      })
-      return { kind: 'git', steps, refreshLayout: false }
-    }
-    if (/[/\\]apps[/\\]cli[/\\]lib[/\\]bin\.js$/i.test(classified.entry || '')) {
-      steps.push({
-        tool: 'pnpm',
-        args: ['--filter', DSH_PACKAGE, 'run', 'build'],
-        cwd,
-        label: `pnpm build ${DSH_PACKAGE}`,
-        optionalUnlessNeeded: true,
-      })
+    const isBuiltBin = /[/\\]apps[/\\]cli[/\\]lib[/\\]bin\.js$/i.test(classified.entry || '')
+    // Git monorepo: browser shell is apps/web/dist (vite). Package libs alone
+    // (`build:lib`) leave a stale shell that seeds old ui-primitives and then
+    // new client plugins fail at apply (e.g. shortcuts / observeComposition).
+    // Rebuild only when pull moved HEAD — no-op pulls must not force a long
+    // workspace build that WIP trees often cannot complete.
+    if ((usesTsx && isBinTs) || isBuiltBin) {
+      steps.push(
+        {
+          tool: 'pnpm',
+          args: ['run', 'build:lib'],
+          cwd,
+          label: 'pnpm build:lib',
+          optionalUnlessNeeded: true,
+        },
+        {
+          tool: 'pnpm',
+          args: ['run', 'build:web'],
+          cwd,
+          label: 'pnpm build:web',
+          optionalUnlessNeeded: true,
+        },
+      )
       return { kind: 'git', steps, refreshLayout: false }
     }
     return { error: 'cannot choose a build; start DSH via tsx + bin.ts or a built lib/bin.js' }
@@ -475,7 +476,7 @@ function gitPullBroughtCommits(pullStdout) {
 }
 
 /**
- * Whether a git client/lib rebuild is required after `git pull`.
+ * Whether a git lib rebuild (`build:lib`) is required after `git pull`.
  * Only the pull transcript matters: no-op pulls must not invoke a workspace
  * build that WIP trees often cannot complete.
  * @param {string} _gitRoot unused; kept for call-site stability

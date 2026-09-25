@@ -97,7 +97,7 @@ git pull && node build-rebooter.mjs
 
 卸载：`dsh plugin --profile web remove dsh-rebooter`。状态在 `$DSH_HOME/rebooter/`，想留就留。
 
-菜单里的「更新插件」跑的是 `dsh plugin --profile web update --latest`，会更新**所有**已装插件，不只是本包；失败时还原 profile 的 `package.json` / lockfile 快照并重装。「更新 DSH」（`update-dsh*`）升级 `layout.json` 记录的 harness 安装（git：pull --ff-only + pnpm install，仅当 pull 带来新提交时才 `build:lib:client`；或对 `@deepseek-ai/dsh` 跑 npm/pnpm），不会改 profile 插件依赖。若可变步骤失败，会回滚到更新前状态；`update-*-restart` 之后仍会拉起服务。
+菜单里的「更新插件」跑的是 `dsh plugin --profile web update --latest`，会更新**所有**已装插件，不只是本包；失败时还原 profile 的 `package.json` / lockfile 快照并重装。「更新 DSH」（`update-dsh*`）升级 `layout.json` 记录的 harness 安装（git：pull --ff-only + pnpm install，仅当 pull 带来新提交时才 `build:lib` + `build:web`；npm：安装已带 web dist 的 `@deepseek-ai/dsh@latest`），不会改 profile 插件依赖。若可变步骤失败，会回滚到更新前状态；`update-*-restart` 之后仍会拉起服务。
 
 ## 发布新版本
 
@@ -131,7 +131,7 @@ node publish-via-actions.mjs 1.0.1
 node verify.mjs
 ```
 
-**8 个套件、262 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
+**8 个套件、267 条断言**：策略核心 · 运行时 · 面板 · 适配层 · 包 · 菜单 · 文档双语同步 · 可移植性守卫。
 
 测试临时文件写在仓库内 `.tmp/`，不写系统临时目录。
 
